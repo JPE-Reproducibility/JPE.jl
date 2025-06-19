@@ -1,0 +1,32 @@
+name: Extract URL from Commit Message
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  extract-url:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Extract URL from commit message
+        id: extract_url
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "Commit message: $COMMIT_MSG"
+
+          # Extract first URL in the commit message
+          EXTRACTED_URL=$(echo "$COMMIT_MSG" | grep -oE 'https?://[^ ]+')
+          echo "Extracted URL: $EXTRACTED_URL"
+
+          # Set as output
+          echo "url=$EXTRACTED_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Use URL in Julia script
+        run: |
+          julia -e 'download(ENV["DOWNLOAD_URL"], "downloaded_file")'
+        env:
+          DOWNLOAD_URL: ${{ steps.extract_url.outputs.url }}
