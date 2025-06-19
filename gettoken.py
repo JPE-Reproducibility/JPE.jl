@@ -3,19 +3,26 @@ import webbrowser
 import http.server
 import requests
 import threading
-from urllib.parse import urlparse, parse_qs
 
-APP_KEY = 'l5g60uc0i2yn2iw'
-APP_SECRET = '0b2zxcxogohm5ag'
-REDIRECT_URI = 'http://localhost:53682'
+import urllib.parse
+from urllib.parse import urlparse, parse_qs, quote
+
+
+APP_KEY = os.environ["JPE_DBOX_APP"]
+APP_SECRET = os.environ["JPE_DBOX_APP_SECRET"]
+REDIRECT_URI = 'http://localhost:53682'  # you need to set that URI on the dropbox UI for the app
 
 # Step 1: Build authorization URL
+scopes = "file_requests.write file_requests.write files.content.write files.content.read files.metadata.read"
+scope_param = urllib.parse.quote(scopes)
+
 auth_url = (
     f"https://www.dropbox.com/oauth2/authorize"
     f"?client_id={APP_KEY}"
     f"&redirect_uri={REDIRECT_URI}"
     f"&response_type=code"
     f"&token_access_type=offline"
+    f"&scope={scope_param}"
 )
 
 # Step 2: Create temporary HTTP server to catch the redirect
