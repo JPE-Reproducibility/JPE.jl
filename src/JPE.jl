@@ -23,7 +23,7 @@ using DuckDB
 using DataFrames
 using Term.Prompts
 using Cleaner
-using RCall
+# using RCall
 
 
 # Write your package code here.

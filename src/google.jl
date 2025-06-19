@@ -1,37 +1,37 @@
-# use R googlesheets4 to work with google sheets
+# # use R googlesheets4 to work with google sheets
 
-function gs4_auth()
+# function gs4_auth()
 
-    path = ENV["JPE_GOOGLE_KEY"]
-    R"""
-    googlesheets4::gs4_auth(path = $(path))
-    """
-end
+#     path = ENV["JPE_GOOGLE_KEY"]
+#     R"""
+#     googlesheets4::gs4_auth(path = $(path))
+#     """
+# end
 
-function gs4_browse()
-    R"""
-    d = googlesheets4::gs4_browse($(gs_arrivals_id()))
-    """
-end
+# function gs4_browse()
+#     R"""
+#     d = googlesheets4::gs4_browse($(gs_arrivals_id()))
+#     """
+# end
 
-function gs4_arrivals()
-    R"""
-    d = googlesheets4::read_sheet($(gs_arrivals_id()), sheet = 'new-arrivals' )
-    """
-    @rget d
-end
+# function gs4_arrivals()
+#     R"""
+#     d = googlesheets4::read_sheet($(gs_arrivals_id()), sheet = 'new-arrivals' )
+#     """
+#     @rget d
+# end
 
-function gs4_append_arrivals(d)
-    R"""
-    googlesheets4::sheet_append($(gs_arrivals_id()), data = d, sheet = 'recorded' )
-    """
-end
+# function gs4_append_arrivals(d)
+#     R"""
+#     googlesheets4::sheet_append($(gs_arrivals_id()), data = d, sheet = 'recorded' )
+#     """
+# end
 
-function gs4_delete_arrivals()
-    R"""
-    googlesheets4::range_delete($(gs_arrivals_id()), sheet = 'new-arrivals', range = "2:100" )
-    """
-end
+# function gs4_delete_arrivals()
+#     R"""
+#     googlesheets4::range_delete($(gs_arrivals_id()), sheet = 'new-arrivals', range = "2:100" )
+#     """
+# end
 
 
 
