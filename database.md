@@ -4,13 +4,13 @@
 
 Status             | Description
 ---------          |--------------
-new_arrival        | The package has arrived and awaits dispatch to replicator
-new_arrival_missing   | The package has arrived but is missing pieces before it can be dispatched
+new_arrival        | file request has been sent and waiting for package submission
 with_author        | The package is with the author
 with_replicator    | The package is with the replicator
 replicator_back_de | The package is with the DE after being returned from the replicator
 author_back_de     | The package is with the DE after being returned from the author
-acceptable_package | The package is ready to be published
+acceptable_package | The package is ready to be published to dataverse
+published_package  | The package is published on dataverse
 
 
 ## Tables

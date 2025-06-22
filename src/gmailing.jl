@@ -51,6 +51,7 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
         </ol>
         ⚠️ Do not forward or otherwise share the content in this email.
         <br>
+        <br>
         Don't hesitate to reach out on slack for any ongoing issues with the replication. Let's talk about computational requirements there etc.
         <br>
         <br>
@@ -66,7 +67,7 @@ end
 
 
 
-case_id(author,ms,round) = string(author,"-",ms,"-R",round)
+case_id(journal,author,ms,round) = string(journal,"-",author,"-",ms,"-R",round)
 
 function gmail_g2g_body(first,paperID)
 
@@ -174,17 +175,49 @@ end
 
 
 
-function gmail_file_request(first,paperID,url,email1;email2 = nothing)
-    to = isnothing(email2) ? [email1] : [email1, email2]
-    body = gmail_file_request_body(first,paperID,url)
+function gmail_file_request(first,paperID,url,email1;email2 = nothing, JO = false)
+    if JO
+        body = gmail_file_request_JO_body(first,paperID,url)
     gmail_send(
-        to,
-        "JPE Replication Package Upload Request",
+        email1,
+        "Request for Paper (PDF) upload from DE",
         body,
         []
     )
+
+    else
+        to = isnothing(email2) ? [email1] : [email1, email2]
+        body = gmail_file_request_body(first,paperID,url)
+        gmail_send(
+            to,
+            "JPE Replication Package Upload Request",
+            body,
+            []
+        )
+    end
 end
 
+function gmail_file_request_JO_body(first,paperID,url)
+    m1 = """
+    Dear $first,
+    <br>
+    <br>
+    Please upload the conditionally accepted versions of paper and appendix in PDF format of $paperID using this dropbox file request link:
+    <br>
+    <br>
+    $url
+    <br>
+    <br>
+    Thanks!
+    <br>
+    <br>
+
+    Best wishes,<br>
+    Florian
+    """
+
+    string(m1,signature())
+end
 
 function gmail_file_request_body(first,paperID,url)
     m1 = """

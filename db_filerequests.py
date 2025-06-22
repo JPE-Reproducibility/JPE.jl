@@ -50,7 +50,7 @@ def get_link_at_path(path,token):
             links = dbx.sharing_list_shared_links(path=path, direct_only=True)
             if links.links:
                 print("Existing public shared link:", links.links[0].url)
-                return inks.links[0].url
+                return links.links[0].url
             else:
                 print("A shared link exists, but we couldn't retrieve it.")
         else:
@@ -66,7 +66,7 @@ def create_file_request(token, title: str, destination_path: str):
         destination_path (str): The Dropbox folder path where uploaded files will be stored.
 
     Returns:
-        str: The URL of the file request for sharing.
+        the file request objects.
     """
     dbx = Dropbox(token)
 
@@ -76,7 +76,7 @@ def create_file_request(token, title: str, destination_path: str):
             title=title,
             destination=destination_path
         )
-        return result.url
+        return {'url': result.url, 'id': result.id}
     except dropbox.exceptions.ApiError as e:
         print(f"Dropbox API error: {e}")
         return None
@@ -85,7 +85,7 @@ def create_file_request(token, title: str, destination_path: str):
 # if __name__ == "__main__":
 #     token = get_access_token()
 #     dbx = Dropbox(token)
-#     url = create_file_request(dbx, "Upload your documents", "/uploading")
+#     url = create_file_request(dbx, "Upload your documents", "/uploading-tests")
 #     if url:
 #         print(f"File request created: {url}")
 #     else:

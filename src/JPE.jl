@@ -23,12 +23,14 @@ using DuckDB
 using DataFrames
 using Term.Prompts
 using Cleaner
-# using RCall
+using RCall
 using PyCall
+using Chain
+using Infiltrator
 
 global dbox_token = ""
 
-
+replicators = Ref(DataFrame())   # replicators
 
 
 # Write your package code here.
@@ -46,6 +48,7 @@ function __init__()
     # include two python modules
     # 1. dropbox API
     @pyinclude("db_filerequests.py")
+    dbox_set_token()
 
     # 2. gmail API
     @pyinclude("gmail_client.py")
@@ -54,23 +57,7 @@ function __init__()
 
 end
 
-dbox_refresh_token() = py"refresh_token"()
-dbox_get_user(to) = py"get_user_info"(to)
 
-function dbox_link_at_path(path,dbox_token)
-    try
-        py"get_link_at_path"(path,dbox_token)
-    catch e1
-        try
-            @error "$e1"
-            @info "refreshing dropbox token"
-            dbox_set_token()
-            py"get_link_at_path"(path,dbox_token)
-        catch e2
-            throw(e2)
-        end
-    end
-end
 
 
 
