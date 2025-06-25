@@ -5,7 +5,7 @@
 Status             | Description
 ---------          |--------------
 new_arrival        | file request has been sent and waiting for package submission
-with_author        | The package is with the author
+with_author        | The package is with the author for resubmission
 with_replicator    | The package is with the replicator
 replicator_back_de | The package is with the DE after being returned from the replicator
 author_back_de     | The package is with the DE after being returned from the author
@@ -15,29 +15,41 @@ published_package  | The package is published on dataverse
 
 ## Tables
 
-papers             | iterations           | reports
----------          |--------------        |---------
-paperID            | paperID              | case_id
-contact1           | round                | replicator1
-contact2           | case_id              | replicator2
-editor             | replicator1          | time1
-first_arrival_date | replicator2          | time2
-title              | time1                | their_comments
-status             | time2                | data_statement
-round              | their_comments       | software
-date_with_authors  | data_statement       | is_success
-is_remote          | software             | is_remote
-is_HPC             | is_success           | is_HPC
-data_statement     | date_with_authors    | running_time_of_code
-DOI                | date_arrived_from_authors         | 
- github URL       | date_assigned_repl        | 
- dataverse URL    | date_completed_repl       | 
- dataverse label  | date_decision_de     | 
-  is_confidential | file_request_id      | 
-                  | decision_de          | 
-                  | is_remote            | 
-                  | is_HPC               | 
-                  | running_time_of_code | 
+papers                      | iterations                | reports
+---------                   |--------------             |---------
+journal                     | journal                   | case_id
+paperID                     | paperID                   | case_id
+firstname_of_author         | firstname_of_author       | firstname_of_author
+surname_of_author           | surname_of_author         | surname_of_author
+contact1                    | round                     | replicator1
+contact2                    |                           | replicator2
+editor                      | replicator1               | time1
+first_arrival_date          | replicator2               | time2
+title                       | time1                     | their_comments
+status                      | time2                     | data_statement
+round                       | their_comments            | software
+date_with_authors           | data_statement            | is_success
+is_remote                   | software                  | is_remote
+is_HPC                      | is_success                | is_HPC
+data_statement              | date_with_authors         | running_time_of_code
+DOI                         | date_arrived_from_authors | 
+ github URL                 | date_assigned_repl        | 
+ dataverse URL              | date_completed_repl       | 
+ dataverse label            | date_decision_de          | 
+is_confidential             | file_request_id           | 
+file_request_path_current   | file_request_url          | 
+                            | decision_de               | 
+                            | is_remote                 | 
+                            | is_HPC                    | 
+                            | running_time_of_code      | 
+                            | fr_path_apps              | 
+                            | fr_path_full              | 
+                            | repl_package_path         | 
+                            | paper_path                | 
+                            | file_request_id_pkg       | 
+                            | file_request_id_paper     | 
+                            | file_request_url_pkg      | 
+                            | file_request_url_paper    | 
 
 
 

@@ -45,3 +45,7 @@ function dbox_check_fr_paper(journal,paperid,author,round)
     d = joinpath(ENV["JPE_DBOX_APPS"],journal,author * "-" * paperid,round,"paper_appendices")
     readdir(d)
 end
+
+function dbox_fr_submit_time(token,dest)
+    py"submission_time"(token,dest)
+end

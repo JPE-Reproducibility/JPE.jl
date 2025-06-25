@@ -27,6 +27,7 @@ using RCall
 using PyCall
 using Chain
 using Infiltrator
+using CSV
 
 global dbox_token = ""
 
@@ -39,19 +40,41 @@ include("db.jl")
 include("dropbox.jl")
 include("snippets.jl")
 include("gmailing.jl")
+include("github.jl")
+include("actions.jl")
+
 
 function dbox_set_token()
     global dbox_token = dbox_refresh_token()
 end
 
+# Global persistent database connection
+const DB_PATH = "/Users/floswald/JPE/jpe.duckdb"
+const DB_JPE = "/Users/floswald/JPE"
+
+const DB_LOCK = ReentrantLock()
+const DB_CONNECTION = Ref{Union{Nothing, Any}}(nothing)
+
+# const con = DBInterface.connect(DuckDB.DB, _DB_PATH)
+
+# if needed
+function close_db()
+    DBInterface.close(con)
+end
+
+# caution: there cannot be another open connection at the same time!
+# function open_db()
+#     DBInterface.connect(DuckDB.DB, _DB_PATH)
+# end
+
 function __init__()
     # include two python modules
     # 1. dropbox API
-    @pyinclude("db_filerequests.py")
+    @pyinclude(joinpath(@__DIR__,"db_filerequests.py"))
     dbox_set_token()
 
     # 2. gmail API
-    @pyinclude("gmail_client.py")
+    @pyinclude(joinpath(@__DIR__,"gmail_client.py"))
 
     @info "Module loaded ok"
 

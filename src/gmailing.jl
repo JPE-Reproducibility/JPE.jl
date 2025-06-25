@@ -115,7 +115,7 @@ function gmail_rnr(first,paperID,title,url,email1,attachment;email2 = nothing)
 
     to = isnothing(email2) ? [email1] : [email1, email2]
     body = gmail_rnr_body(first,paperID,title,url)
-    gmail_send(
+    gmail_draft(
         to,
         "JPE Reproducibility Checks Outcome",
         body,
@@ -159,6 +159,9 @@ function gmail_rnr_body(first,paperID,title,url)
     for another check.
     <br>
     <br>
+    It is our policy to ask for the submission of your replication package within 30 days, i.e., by $(Dates.format(today() + Day(30), dateformat"d U Y")).
+    <br>
+    <br>
 
     I would like to thank you for your cooperation and I
     look forward to receiving your revised package.
@@ -175,9 +178,9 @@ end
 
 
 
-function gmail_file_request(first,paperID,url,email1;email2 = nothing, JO = false)
+function gmail_file_request(first,paperID,title,url,email1;email2 = nothing, JO = false)
     if JO
-        body = gmail_file_request_JO_body(first,paperID,url)
+        body = gmail_file_request_JO_body(first,paperID,title,url)
     gmail_send(
         email1,
         "Request for Paper (PDF) upload from DE",
@@ -187,7 +190,7 @@ function gmail_file_request(first,paperID,url,email1;email2 = nothing, JO = fals
 
     else
         to = isnothing(email2) ? [email1] : [email1, email2]
-        body = gmail_file_request_body(first,paperID,url)
+        body = gmail_file_request_body(first,paperID,title,url)
         gmail_send(
             to,
             "JPE Replication Package Upload Request",
@@ -197,12 +200,12 @@ function gmail_file_request(first,paperID,url,email1;email2 = nothing, JO = fals
     end
 end
 
-function gmail_file_request_JO_body(first,paperID,url)
+function gmail_file_request_JO_body(first,paperID,title,url)
     m1 = """
     Dear $first,
     <br>
     <br>
-    Please upload the conditionally accepted versions of paper and appendix in PDF format of $paperID using this dropbox file request link:
+    Please upload the conditionally accepted versions of paper and appendix in PDF format of $paperID, titled \"$title\", using this dropbox file request link:
     <br>
     <br>
     $url
@@ -219,24 +222,27 @@ function gmail_file_request_JO_body(first,paperID,url)
     string(m1,signature())
 end
 
-function gmail_file_request_body(first,paperID,url)
+function gmail_file_request_body(first,paperID,title,url)
     m1 = """
     Dear $first,
     <br>
     <br>
     I am the Data Editor of the JPE.
-    I would like to invite you to submit your replication package for paper $paperID as a single zip file via this dropbox file request link:
+    I would like to invite you to submit your replication package for your paper for $paperID, titled \"$title\", as a single zip file via this dropbox file request link:
     <br>
     <br>
     $url
     <br>
     <br>
 
-    Please notice the required contents of your package: https://jpedataeditor.github.io/
+    Please review the required contents of your replication package described at https://jpedataeditor.github.io/ .
+    <br>
+    <br>
+    It is our policy to ask for the submission of your replication package within 30 days, i.e., by $(Dates.format(today() + Day(30), dateformat"d U Y")). If you foresee a problem with meeting this deadline, you will need to request an extension. 
     <br>
     <br>
 
-    I'm looking forward to receiving your package.
+    I'm looking forward to receiving your replication package. 
     <br>
     <br>
 
@@ -256,7 +262,7 @@ function signature()
     Data Editor<br>
     Journal of Political Economy<br>
     email: jpe.dataeditor@gmail.com<br>
-    web (EJ) : https://jpedataeditor.github.io/<br>
+    web (JPE) : https://jpedataeditor.github.io/<br>
     web (personal) : https://floswald.github.io/
     """
 end

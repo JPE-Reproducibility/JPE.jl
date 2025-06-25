@@ -2,6 +2,7 @@ import dropbox
 from dropbox import Dropbox
 from dropbox.file_requests import CreateFileRequestArgs
 from dropbox.sharing import RequestedVisibility, SharedLinkSettings
+from dropbox.files import FileMetadata
 import os
 import requests
 
@@ -82,6 +83,23 @@ def create_file_request(token, title: str, destination_path: str):
         return None
 
 
+
+def submission_time(token, destination_path):
+    dbx = Dropbox(token)
+
+    try:
+        result = dbx.files_list_folder(destination_path)
+
+        for entry in result.entries:
+            if isinstance(entry, FileMetadata):
+                return entry.server_modified  # First file found
+
+        return None  # No file entries found
+
+    except dropbox.exceptions.ApiError as e:
+        print(f"Dropbox API error: {e}")
+        return None
+    
 # if __name__ == "__main__":
 #     token = get_access_token()
 #     dbx = Dropbox(token)
