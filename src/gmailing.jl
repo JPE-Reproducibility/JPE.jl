@@ -227,7 +227,7 @@ function gmail_file_request_JO_body(authorlast,paperID,title,url)
     Dear Journal Office,
     <br>
     <br>
-    Please upload the conditionally accepted version of the paper and online appendix in PDF format of $paperID, titled \"$title\", using this dropbox file request link:
+    Please upload the conditionally accepted version of the paper and online appendix in PDF format of $paperID, by author $(authorlast) and titled \"$title\", using this dropbox file request link:
     <br>
     <br>
     $url
