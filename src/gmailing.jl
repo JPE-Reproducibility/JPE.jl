@@ -178,9 +178,9 @@ end
 
 
 
-function gmail_file_request(first,paperID,title,url,email1;email2 = nothing, JO = false)
+function gmail_file_request(name,paperID,title,url,email1;email2 = nothing, JO = false)
     if JO
-        body = gmail_file_request_JO_body(first,paperID,title,url)
+        body = gmail_file_request_JO_body(name,paperID,title,url)
     gmail_send(
         email1,
         "Request for Paper (PDF) upload from DE",
@@ -190,7 +190,7 @@ function gmail_file_request(first,paperID,title,url,email1;email2 = nothing, JO 
 
     else
         to = isnothing(email2) ? [email1] : [email1, email2]
-        body = gmail_file_request_body(first,paperID,title,url)
+        body = gmail_file_request_body(name,paperID,title,url)
         gmail_send(
             to,
             "JPE Replication Package Upload Request",
@@ -200,12 +200,34 @@ function gmail_file_request(first,paperID,title,url,email1;email2 = nothing, JO 
     end
 end
 
-function gmail_file_request_JO_body(first,paperID,title,url)
+function gmail_file_request_JO_body(authorlast,paperID,title,url)
     m1 = """
-    Dear $first,
+    <h1>Data Editor's Upload Request</h1>
+
+    <table border="1" cellpadding="4" cellspacing="0" width="100%">
+    <tr>
+        <td width="10%">paper ID</td>
+        <td>$(paperID)</td>
+    </tr>
+    <tr>
+        <td width="10%">Title</td>
+        <td>$(title)</td>
+    </tr>
+    <tr>
+        <td width="10%">Author</td>
+        <td>$(authorlast)</td>
+    </tr>
+    <tr>
+        <td width="10%">Upload link</td>
+        <td>$(url)</td>
+    </tr>
+    </table>
     <br>
     <br>
-    Please upload the conditionally accepted versions of paper and appendix in PDF format of $paperID, titled \"$title\", using this dropbox file request link:
+    Dear Journal Office,
+    <br>
+    <br>
+    Please upload the conditionally accepted version of the paper and online appendix in PDF format of $paperID, titled \"$title\", using this dropbox file request link:
     <br>
     <br>
     $url
