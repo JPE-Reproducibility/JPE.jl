@@ -70,10 +70,6 @@ ar(; update = false) = available_replicators(; update = update)
 
 
 
-# avoid https://duckdb-gsheets.com
-
-
-
 function activate(; user = "jpe")
     if user == "jpe"
         haskey(ENV, "JPE_GOOGLE_KEY") || error("No JPE_GOOGLE_KEY found in ENV")
@@ -372,6 +368,24 @@ function read_google_arrivals( )
 
     new_rows = db_append_new_df("form_arrivals","paper_id",df)
     return new_rows
+end
+
+function read_replicators()
+    gs4_auth()
+    gs_reports = gs4_update_replicators()
+    # create a clean df from gs_arrivals
+    df = gs_reports |> polish_names |> DataFrame
+
+    # with_db() do con
+    #     DuckDB.register_data_frame(con,df,"reps")
+    #     DBInterface.execute(con, "CREATE OR REPLACE TABLE replicators AS SELECT * FROM reps")
+
+
+
+    # new_rows = db_append_new_df("replicators", ["paper_id", "round"], df)
+
+    return df
+
 end
 
 """

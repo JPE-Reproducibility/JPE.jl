@@ -83,22 +83,204 @@ end
 
 
 """
+Interactively select replicators for a paper
+"""
+function select_replicators(paperID)
+    # Get relevant row from iterations table
+    # By default, get the highest round number
+    i = @chain db_df("iterations") begin
+        @subset(:paper_id .== paperID)
+    end
+    
+    # Initialize variables for previous replicators
+    prev_replicator1 = nothing
+    prev_replicator2 = nothing
+    
+    # Check if this is a subsequent round
+    if maximum(i.round) > 1
+        last_round_data = @chain i begin
+            @subset(:round .== maximum(:round))
+            first()  # Get the first (and should be only) row
+        end
+        
+        # Store previous replicators
+        prev_replicator1 = last_round_data.replicator1
+        prev_replicator2 = last_round_data.replicator2
+    end
+    
+    # Get current iteration data
+    current_iteration = @chain i begin
+        @subset(:round .== maximum(:round))
+        first()
+    end
+    
+    # Get available replicators
+    rs = read_replicators()
+    
+    # Create interactive menu for primary replicator selection
+    println("\n📋 Select primary replicator for paper ID: $paperID")
+    
+    # Create options array with display text and email value
+    options = []
+    for r in eachrow(rs)
+        email = r.email
+        name = r.name
+        
+        # Mark previous replicators with a prefix instead of highlighting
+        if !isnothing(prev_replicator1) && email == prev_replicator1
+            display_text = "🔄 $name ($email) [previous primary]"
+        elseif !isnothing(prev_replicator2) && email == prev_replicator2
+            display_text = "🔄 $name ($email) [previous secondary]"
+        else
+            display_text = "$name ($email)"
+        end
+        
+        push!(options, display_text => email)
+    end
+    
+    # Find index to preselect
+    preselect_idx = 1  # Default to first option
+    if !isnothing(prev_replicator1)
+        # Find index of prev_replicator1 in options
+        for (idx, (_, email)) in enumerate(options)
+            if email == prev_replicator1
+                preselect_idx = idx
+                break
+            end
+        end
+    end
+    
+    # Display menu for primary replicator selection
+    primary_menu = RadioMenu([opt[1] for opt in options])
+    primary_choice = request(primary_menu)
+    
+    # Handle cancellation (if Esc is pressed)
+    if primary_choice == -1
+        println("Selection cancelled. Using first option as default.")
+        primary_choice = 1
+    end
+    
+    # Get the actual email from selection
+    primary_email = options[primary_choice][2]
+    
+    # Get name of primary replicator
+    primary_name = filter(r -> r.email == primary_email, eachrow(rs))[1].name
+    
+    # Ask if a second replicator is needed
+    println("Do you want to assign a second replicator?")
+    yes_no_menu = RadioMenu(["No", "Yes"])  # Default is first option (No)
+    use_second = request(yes_no_menu) == 2  # Returns true if "Yes" is selected
+    
+    secondary_email = nothing
+    secondary_name = nothing
+    
+    if use_second
+        println("\n📋 Select secondary replicator:")
+        
+        # Filter out the primary replicator from options
+        secondary_options = filter(opt -> opt[2] != primary_email, options)
+        
+        # If there's a previous second replicator, preselect it
+        preselect_idx = 1  # Default to first option
+        if !isnothing(prev_replicator2)
+            # Find index of prev_replicator2 in secondary_options
+            for (idx, (_, email)) in enumerate(secondary_options)
+                if email == prev_replicator2
+                    preselect_idx = idx
+                    break
+                end
+            end
+        end
+        
+        # Display menu for secondary replicator selection
+        secondary_menu = RadioMenu([opt[1] for opt in secondary_options])
+        secondary_choice = request(secondary_menu)
+        
+        # Handle cancellation (if Esc is pressed)
+        if secondary_choice == -1
+            println("Selection cancelled. Using first option as default.")
+            secondary_choice = 1
+        end
+        
+        # Get the actual email from selection
+        secondary_email = secondary_options[secondary_choice][2]
+        
+        # Get name of secondary replicator
+        secondary_name = filter(r -> r.email == secondary_email, eachrow(rs))[1].name
+    end
+    
+    # Return selected replicators and related information
+    return (
+        primary_email = primary_email,
+        primary_name = primary_name,
+        secondary_email = secondary_email,
+        secondary_name = secondary_name,
+        current_round = maximum(i.round),
+        current_iteration = current_iteration,
+        is_subsequent_round = maximum(i.round) > 1
+    )
+end
+
+"""
+Assign selected replicators to a paper and update database
+"""
+function assign_replicators(paperID, selection)
+    # Unpack selection
+    primary_email = selection.primary_email
+    primary_name = selection.primary_name
+    secondary_email = selection.secondary_email
+    secondary_name = selection.secondary_name
+    current_round = selection.current_round
+    current_iteration = selection.current_iteration
+    is_subsequent_round = selection.is_subsequent_round
+    
+    # Update iterations table
+    db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "replicator1", primary_email)
+    db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "date_assigned_repl", today())
+    
+    if !isnothing(secondary_email)
+        db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "replicator2", secondary_email)
+    end
+    
+    # Get submission time from Dropbox and update
+    submit_time = dbox_fr_submit_time(dbox_token, current_iteration.file_request_path)
+    if !isnothing(submit_time)
+        db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "date_arrived_from_authors", Date(submit_time))
+    end
+    
+    # Update papers table status
+    db_update_cell("papers", "paper_id = '$(paperID)'", "status", "with_replicator")
+    
+    # Send email to replicators
+    # Get necessary information for email
+    download_url = dbox_link_at_path(current_iteration.file_request_path, dbox_token)
+    repo_url = current_iteration.github_url
+    
+    # Create case ID for email
+    paper_row = db_df_where("papers", "paper_id", paperID)[1, :]
+    caseID = case_id(paper_row.journal, paper_row.surname_of_author, paperID, current_round)
+    
+    # Send email
+    if !isnothing(secondary_email)
+        gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, 
+                    first2=secondary_name, email2=secondary_email, back=is_subsequent_round)
+    else
+        gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, back=is_subsequent_round)
+    end
+    
+    println("✅ Successfully assigned paper $(paperID) to replicators")
+    return (primary=primary_email, secondary=secondary_email)
+end
+
+"""
 assigns the latest round of a paper to replicators
 """
 function assign(paperID)
-
-    # display a menu from where to pick one available replicator
-    # should display the replicator of the previous round (if applicable) in a different colour
-    # optionally choose a second replicator
-
-    # get row paper_id from papers, call it r
-
-    # in "iterations" table, fill in date_assigned_repl and date_arrived_from_authors via `dbox_fr_submit_time(token, r.file_request_path_current)`
-
-    # set r.status = with_replicator
-
-    # send email to replicators
-
+    # Select replicators
+    selection = select_replicators(paperID)
+    
+    # Assign replicators
+    return assign_replicators(paperID, selection)
 end
 
 # list all papers that have been invited to submit
@@ -239,14 +421,19 @@ function prepare_rnrs()
     # set status of paper_id in papers to "with_author", set date_with_authors to today()
 end
 
-function collect_resubmissions()
+function collect_file_requests()
     # filter papers for status "with_author"
+    rows = db_df_where("papers","status","with_author")
 
-    # get file_request id and check whether arrived
+    for r in eachrow(rows)
+        # get file_request id and check whether arrived
 
-    # set papers.status= "author_back_de"
+        # set papers.status= "author_back_de"
 
-    # in iterations, set date_arrived etc
+        # in iterations, set date_arrived etc
+
+    end
+
+
+    
 end
-
-

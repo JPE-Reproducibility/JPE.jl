@@ -21,7 +21,9 @@ module JPE
 using Dates
 using DuckDB
 using DataFrames
-using Term.Prompts
+# using Term.Prompts
+# using Term
+using REPL.TerminalMenus
 using Cleaner
 using RCall
 using PyCall
