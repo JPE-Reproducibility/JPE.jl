@@ -37,15 +37,19 @@ function dbox_create_file_request(dest,title,token)
 end
 
 function dbox_check_fr_pkg(journal,paperid,author,round)
-    d = joinpath(ENV["JPE_DBOX_APPS"],journal,author * "-" * paperid,round,"replication_package")
+    d = joinpath(ENV["JPE_DBOX_APPS"],journal,author * "-" * paperid,round,"replication-package")
     readdir(d)
 end
 
 function dbox_check_fr_paper(journal,paperid,author,round)
-    d = joinpath(ENV["JPE_DBOX_APPS"],journal,author * "-" * paperid,round,"paper_appendices")
+    d = joinpath(ENV["JPE_DBOX_APPS"],journal,author * "-" * paperid,round,"paper-appendices")
     readdir(d)
 end
 
 function dbox_fr_submit_time(token,dest)
     py"submission_time"(token,dest)
+end
+
+function dbox_fr_exists(token,dest)
+    py"file_request_exists"(token,dest)
 end

@@ -1,5 +1,8 @@
 
 
+JO_email() = haskey(ENV,"JPE_TEST") ? "florian.oswald@unito.it" : "jpe@press.uchicago.edu"
+author_email(mail::String) = haskey(ENV,"JPE_TEST") ? "florian.oswald@unito.it" : mail
+
 function gmail_assign(first1,email1,caseID,download_url, repo_url; first2 = nothing,email2 = nothing,back = false)
     subject = if back
         "The JPE package $caseID is back"
@@ -201,6 +204,7 @@ function gmail_file_request(name,paperID,title,url,email1;email2 = nothing, JO =
 end
 
 function gmail_file_request_JO_body(authorlast,paperID,title,url)
+    @debug authorlast paperID title url
     m1 = """
     <h1>Data Editor's Upload Request</h1>
 
@@ -245,12 +249,14 @@ function gmail_file_request_JO_body(authorlast,paperID,title,url)
 end
 
 function gmail_file_request_body(first,paperID,title,url)
+    @debug first paperID title url
+
     m1 = """
     Dear $first,
     <br>
     <br>
     I am the Data Editor of the JPE.
-    I would like to invite you to submit your replication package for your paper for $paperID, titled \"$title\", as a single zip file via this dropbox file request link:
+    I would like to invite you to submit your replication package for your paper titled \"$title\", with manuscript ID $paperID, as a single zip file via this dropbox file request link:
     <br>
     <br>
     $url

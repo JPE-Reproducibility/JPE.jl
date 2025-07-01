@@ -82,6 +82,18 @@ def create_file_request(token, title: str, destination_path: str):
         print(f"Dropbox API error: {e}")
         return None
 
+def file_request_exists(token, destination_path: str) -> bool:
+    dbx = Dropbox(token)
+
+    result = dbx.file_requests_list_v2()
+    file_requests = result.file_requests
+
+    while result.has_more:
+        result = dbx.file_requests_list_continue(result.cursor)
+        file_requests.extend(result.file_requests)
+
+    return any(fr.destination == destination_path for fr in file_requests)
+
 
 
 def submission_time(token, destination_path):

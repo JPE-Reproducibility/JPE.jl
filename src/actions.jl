@@ -1,10 +1,99 @@
 
-function assign(paperID,rep1; rep2 = nothing)
-    # assign paper_id to rep1, optionally also rep2
+
+"""
+send packages to replicators
+this happens after authors submitted their packages via file request link
+"""
+function dispatch()
+    rows = db_df_where("papers","status","author_back_de")
+
+    # p = papers
+    for r in eachrow(rows)
+        preprocess(r.paper_id)
+        assign(r.paper_id)  # needs to prompt for which replicator
+    end
+end
+
+
+function preprocess(paperID; which_round = nothing)
+    # get row from "papers"
+    rt = db_df_where("papers","paper_id",paperID)
+    if nrow(rt) != 1
+        error("can only get a single row here")
+    end
+    r = NamedTuple(rt[1,:])
+
+    round = if isnothing(which_round)
+        r.round[1]
+    else
+        which_round
+    end
+
+    # create a temp dir
+    d = tempdir()
+    @show repoloc = joinpath(d,string(paperID,"-",round))
+    o = pwd()
+    cd(d)
+
+    # clone branch current "round"
+    gh_clone_branch(r.gh_org_repo,"round$(r.round)", to = repoloc)
+
+    # * copy round version from Dropbox to local repo into temp location
+    cp(joinpath(r.file_request_path_full,"paper-appendices"),joinpath(repoloc,"paper-appendices"), force = true)
+    cp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), force = true)
+
+    zips = read_and_unzip_directory(joinpath(repoloc,"replication-package"))
+
+    @debug readdir(repoloc)
+
+    # in a new julia process
+    cmd = Cmd([
+        "julia", 
+        "--project=.", "-e",
+        "using JPEtools; JPEtools.precheck_package(\"$(joinpath(repoloc,"replication-package"))\")"
+    ])
+
+    res = chomp(read(run(Cmd(cmd; dir = "/Users/floswald/git/JPEtools")),String))
+
+    # * write the _variables.yml file for the report template
+    open(joinpath(repoloc,"_variables.yml"), "w") do io
+        println(io, "title: $(r.title)" )
+        println(io, "author: $(r.surname_of_author)" )
+        println(io, "round: $(r.round)" )
+        println(io, "repo: $(r.github_url)" )
+        println(io, "paper_id: $(r.paper_id)" )
+    end
+    check = readlines(joinpath(repoloc,"_variables.yml"))
+
+    # * commit all except data
+    branch = chomp(read(run(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc)), String))
+
+    cmd = """
+    git add .
+    git commit -m '🚀 prechecks round $(r.round)'
+    git tag -a round$(r.round) -m 'round$(r.round)'
+    git push origin $branch
+    """
+    gr = read(run(Cmd(`sh -c $cmd`, dir=repoloc)),String)
+    
+
+    # * Push back
+    # * Delete local repo
+end
+
+
+"""
+assigns the latest round of a paper to replicators
+"""
+function assign(paperID)
+
+    # display a menu from where to pick one available replicator
+    # should display the replicator of the previous round (if applicable) in a different colour
+    # optionally choose a second replicator
 
     # get row paper_id from papers, call it r
 
-    # add new row to "iterations" table, filling in date_assigned_repl and date_arrived_from_authors via `dbox_fr_submit_time(token, r.file_request_path_current)`
+    # in "iterations" table, fill in date_assigned_repl and date_arrived_from_authors via `dbox_fr_submit_time(token, r.file_request_path_current)`
 
     # set r.status = with_replicator
 
@@ -114,7 +203,12 @@ function collect_reports()
 end
 
 function prepare_rnrs()
+
+
     # filter papers table for status "replicator_back_de"
+
+        # capture current_round from papers.round and check consistent with iterations
+
 
     # for each, print summary on screen
 
@@ -124,7 +218,16 @@ function prepare_rnrs()
 
     # set in "iterations": date_decision_de = today, file_request_id = fr_id, decision_de = "rnr", file_request_url = fr_url
 
+    # START OF NEXT ITERATION HERE
+
     # create the next iteration for this paper, i.e. add a row in "iterations" by copying journal,paper_id,firstname_of_author,surname_of_author,round,but modifying round from previous to round + 1
+
+    # set papers.round = current_round + 1
+    rnew = copy(r)
+    rnew.round += 1
+
+    # create new branch on repo called current_round + 1 from branch current_round
+    gh_create_branch_on_github_from(r.gh_url,"round$(r.round)","round$(rnew.round)")
 
     # call setup_dropbox_structure!(r) on that new row of the "iterations" dataframe
 
@@ -139,8 +242,11 @@ end
 function collect_resubmissions()
     # filter papers for status "with_author"
 
-    # get file_requ
+    # get file_request id and check whether arrived
 
+    # set papers.status= "author_back_de"
 
-
+    # in iterations, set date_arrived etc
 end
+
+

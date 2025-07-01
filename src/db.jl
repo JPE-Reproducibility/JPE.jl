@@ -212,7 +212,8 @@ function db_get_table_schema(table::String)
             "is_HPC" => Dict(:type => "BOOLEAN", :constraints => ""),
             "data_statement" => Dict(:type => "VARCHAR", :constraints => ""),
             "software" => Dict(:type => "VARCHAR", :constraints => ""),
-            "github_url" => Dict(:type => "VARCHAR", :constraints => "")
+            "github_url" => Dict(:type => "VARCHAR", :constraints => ""),
+            "gh_org_repo" => Dict(:type => "VARCHAR", :constraints => "")
         ),
         "form_arrivals" => Dict(
             "paper_id" => Dict(:type => "VARCHAR", :constraints => ""),
@@ -267,6 +268,7 @@ function db_get_table_schema(table::String)
             "file_request_url_pkg" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_url_paper" => Dict(:type => "VARCHAR", :constraints => ""),
             "github_url" => Dict(:type => "VARCHAR", :constraints => ""),
+            "gh_org_repo" => Dict(:type => "VARCHAR", :constraints => ""),
             "_primary_key" => Dict(:columns => ["paper_id", "round"])
         ),
         "reports" => Dict(
@@ -1048,5 +1050,110 @@ function db_add_unique_constraint(table::String, columns::Union{String, Vector{S
         println("✓ Added UNIQUE constraint on column $(cols[1]) to table $table")
     else
         println("✓ Added UNIQUE constraint on columns ($(col_list)) to table $table")
+    end
+end
+
+"""
+    db_append_new_row(table::String, key_column::Union{String, Vector{String}}, row::DataFrameRow, df::Union{Nothing, DataFrame}=nothing)
+
+Append a single row to a database table if a row with the same key value doesn't already exist.
+This function assumes the table already exists and will error if it doesn't.
+It uses direct SQL insertion with parameterized queries for database operations.
+
+# Arguments
+- `table::String`: The name of the table to append to
+- `key_column::Union{String, Vector{String}}`: The column name(s) to use for identifying unique rows.
+  Can be a single column name as a String or multiple column names as a Vector{String}.
+- `row::DataFrameRow`: The row to append
+- `df::Union{Nothing, DataFrame}=nothing`: Optional original DataFrame (not used for table creation anymore)
+
+# Returns
+- The row if it was added
+- `nothing` if a row with the same key already exists
+"""
+function db_append_new_row(table::String, key_column::Union{String, Vector{String}}, row::DataFrameRow)
+    # Validate table name to prevent SQL injection
+    if !occursin(r"^[A-Za-z_][A-Za-z0-9_]*$", table)
+        error("Invalid table name: $table")
+    end
+    
+    # Check if table exists - error if it doesn't
+    if !db_table_exists(table)
+        error("Table '$table' does not exist. Ensure the table exists before calling db_append_new_row.")
+    end
+    
+    # Table exists, use direct SQL insertion to avoid Union{} type issues
+    return robust_db_operation() do con
+        # Check if row already exists
+        if key_column isa String
+            # Single column case
+            key_value = row[Symbol(key_column)]
+            # Handle missing values in the key
+            if ismissing(key_value)
+                check_query = "SELECT 1 FROM $table WHERE $key_column IS NULL LIMIT 1"
+                check_result = DataFrame(DBInterface.execute(con, check_query))
+            else
+                check_query = "SELECT 1 FROM $table WHERE $key_column = ? LIMIT 1"
+                check_result = DataFrame(DBInterface.execute(DBInterface.prepare(con, check_query), (key_value,)))
+            end
+            
+            if nrow(check_result) > 0
+                @info "Row with $key_column = $(ismissing(key_value) ? "NULL" : key_value) already exists in $table"
+                return nothing
+            end
+        else
+            # Multiple columns case - build WHERE clause with proper NULL handling
+            where_clauses = String[]
+            where_values = []
+            
+            for col in key_column
+                col_sym = Symbol(col)
+                if ismissing(row[col_sym])
+                    push!(where_clauses, "$col IS NULL")
+                else
+                    push!(where_clauses, "$col = ?")
+                    push!(where_values, row[col_sym])
+                end
+            end
+            
+            where_str = join(where_clauses, " AND ")
+            
+            # Check if a row with these keys already exists
+            check_query = "SELECT 1 FROM $table WHERE $where_str LIMIT 1"
+            check_result = DataFrame(DBInterface.execute(DBInterface.prepare(con, check_query), Tuple(where_values)))
+            
+            if nrow(check_result) > 0
+                key_desc = join(["$col = $(ismissing(row[Symbol(col)]) ? "NULL" : row[Symbol(col)])" for col in key_column], ", ")
+                @info "Row with $key_desc already exists in $table"
+                return nothing
+            end
+        end
+        
+        # Row doesn't exist, insert it using direct SQL
+        # Extract column names and values, handling missing values
+        columns = String[]
+        values = []
+        
+        for (col, val) in pairs(row)
+            push!(columns, string(col))
+            push!(values, val)  # DuckDB's parameterized queries handle missing values correctly
+        end
+        
+        # Create the INSERT statement
+        columns_str = join(columns, ", ")
+        placeholders = join(fill("?", length(columns)), ", ")
+        
+        insert_query = "INSERT INTO $table ($columns_str) VALUES ($placeholders)"
+        stmt = DBInterface.prepare(con, insert_query)
+        DBInterface.execute(stmt, Tuple(values))
+        
+        if key_column isa String
+            @info "Appended row with $key_column = $(ismissing(row[Symbol(key_column)]) ? "NULL" : row[Symbol(key_column)]) to $table"
+        else
+            key_desc = join(["$col = $(ismissing(row[Symbol(col)]) ? "NULL" : row[Symbol(col)])" for col in key_column], ", ")
+            @info "Appended row with $key_desc to $table"
+        end
+        
+        return row
     end
 end

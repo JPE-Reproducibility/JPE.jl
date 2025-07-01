@@ -57,7 +57,7 @@ function available_replicators(; update = false)
     d = if update
         gs4_update_replicators()
     else
-        replicators
+        replicators[]
     end
     @chain d begin
         subset("can take +1 package" => ByRow(==("Yes")), skipmissing = true)
@@ -135,15 +135,15 @@ creates file requests for the replication package and paper appendices.
 # Returns
 - The updated DataFrameRow with file request information
 """
-function setup_dropbox_structure!(r::DataFrameRow, dbox_token; create_fr = true)
+function setup_dropbox_structure!(r::DataFrameRow, dbox_token)
     # Get case ID for file request naming
     cid = get_case_id(r.journal, r.paper_slug, r.round)
     
     # Set up paths
     r.file_request_path = get_dbox_loc(r.journal, r.paper_slug, r.round)
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
-    r.repl_package_path = joinpath(r.file_request_path,"replication_package")
-    r.paper_path = joinpath(r.file_request_path,"paper_appendices")
+    r.repl_package_path = joinpath(r.file_request_path,"replication-package")
+    r.paper_path = joinpath(r.file_request_path,"paper-appendices")
 
     # Create directories
     mr = string(ENV["JPE_DBOX_APPS"], r.repl_package_path)
@@ -152,40 +152,40 @@ function setup_dropbox_structure!(r::DataFrameRow, dbox_token; create_fr = true)
     mkpath(mp)
     
     # Create file requests if needed
-    if create_fr
+    @debug "fr exists?" dbox_fr_exists(dbox_token,r.repl_package_path)
+    # if !dbox_fr_exists(dbox_token,r.repl_package_path)
         fr_pkg   = dbox_create_file_request(r.repl_package_path, "$cid upload", dbox_token)
         fr_paper = dbox_create_file_request(r.paper_path, "$cid upload", dbox_token)
         r.file_request_id_pkg = fr_pkg["id"]
         r.file_request_id_paper = fr_paper["id"]
         r.file_request_url_pkg = fr_pkg["url"]
         r.file_request_url_paper = fr_paper["url"]
-    end
+    # end
+    @debug r.file_request_id_pkg r.file_request_url_pkg
 end
 
 """
-    google_arrivals(; append = true, sendJO = true, sendauthor = true, create_gh = true)
+    google_arrivals()
 
 Ingest new papers into the database from Google Sheets, send file requests to authors and JO,
 and store in the papers table. This function is designed to be robust against database corruption
 by using transactions and proper error handling for database operations.
 
-# Arguments
-- `append::Bool`: Whether to append to existing tables or replace them
-- `sendJO::Bool`: Whether to send emails to the Journal Office
-- `sendauthor::Bool`: Whether to send emails to authors
-- `create_gh::Bool`: Whether to create GitHub repositories
-
 # Returns
-- The new rows that were added to the database, or all rows if not appending
+- The new rows that were added to the database
 """
-function google_arrivals(; append = true, sendJO = true, sendauthor = true, create_gh = true, create_fr = true)
+function google_arrivals()
     # Step 1: Read data from Google Sheets - this already uses db_append_new_df internally
     # which now has improved transaction handling
-    x = read_google_arrivals(append = append)
+    x = read_google_arrivals( )
 
     # If no new data, use existing data from database
     if isnothing(x)
-        x1 = db_df("form_arrivals")
+        # no new papers to process. still look for non-processed ones
+        x1 = @chain db_df("form_arrivals") begin
+            @subset(.! :processed)
+        end
+        @info "still $(nrow(x1)) arrivals to process"
     else
         x1 = x
     end
@@ -197,6 +197,10 @@ function google_arrivals(; append = true, sendJO = true, sendauthor = true, crea
     # This is a critical step for data integrity
     db_write_backup("papers_backup", y)
     
+    # Ensure required tables exist before processing rows
+    db_ensure_table_exists("papers")
+    db_ensure_table_exists("iterations")
+    
     # Process each row
     for r in eachrow(y)
         ghid = string(r.journal, "-", r.surname_of_author, "-", r.paper_id)
@@ -204,57 +208,54 @@ function google_arrivals(; append = true, sendJO = true, sendauthor = true, crea
         cid = get_case_id(r.journal, r.paper_slug, r.round)
 
         # create folder structure and file requests
-        setup_dropbox_structure!(r, dbox_token; create_fr = create_fr)
+        setup_dropbox_structure!(r, dbox_token)
 
         # create gh repo for this package from template
-        gh_url = "JPE-Reproducibility/" * ghid
-        if create_gh
-            run(`gh repo create $(gh_url) --private --template JPE-Reproducibility/JPEtools.jl`)
+        r.gh_org_repo = "JPE-Reproducibility/" * ghid
+        
+        @debug "repo exists?" gh_repo_exists(r.gh_org_repo)
+
+        if !gh_repo_exists(r.gh_org_repo)
+            gh_silent_run(`gh repo create $(r.gh_org_repo) --private --template JPE-Reproducibility/JPEtemplate`)
+            
+            wait_for_branch(r.gh_org_repo,"main")
+
+            gh_create_branch_on_github_from(r.gh_org_repo,"main","round$(r.round)")
+            # set new default branch
+            gh_silent_run(`gh api -X PATCH repos/$(r.gh_org_repo) -f default_branch=round$(r.round)`)
         else
-            @warn "not creating repo for $ghid"
+            @info "repo $(r.gh_org_repo) already exists"
         end
 
-        r.github_url = "https://github.com/" * gh_url
+        r.github_url = "https://github.com/" * r.gh_org_repo
 
         # send email to authors
-        if sendauthor
-            gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, r.email_of_author)
-        else
-            @warn "not sending author FR for $ghid"
-        end
+        gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author))
 
         r.date_with_authors = Dates.today()
 
         # send email to JO
-        if sendJO
-            gmail_file_request("Journal Office", r.paper_id, r.title, r.file_request_url_paper, "jpe@press.uchicago.edu", JO = true)
-        else
-            @warn "not sending email to JO requesting paper for $ghid"
-        end
+        gmail_file_request(r.surname_of_author, r.paper_id, r.title, r.file_request_url_paper, JO_email(), JO = true)
+        
+        # Add row to papers table using db_append_new_row with the original DataFrame for type information
+        db_append_new_row("papers", "paper_id", r)
+        
+        # Add row to iterations table (using composite key)
+        # We need to exclude timestamp from iterations table
+        iter_row = select(DataFrame([r]), Not(:timestamp))[1, :]
+        iter_df = select(y, Not(:timestamp))
+        db_append_new_row("iterations", ["paper_id", "round"], iter_row)
+        
+        db_update_cell("form_arrivals", "paper_id = $(r.paper_id)", "processed", true)
     end
 
     # Final security backup after all processing
     db_write_backup("papers", y)
-
     
-    # Use the improved db_append_new_df function for database operations
-    # This now uses robust_db_operation internally for better transaction handling
-    if append
-        # This is the critical database operation that needs to be robust
-        new_papers = db_append_new_df("papers", "paper_id", y)
-        db_add_unique_constraint("papers", "paper_id")
-        # Use composite key for iterations table
-        new_iters = db_append_new_df("iterations", ["paper_id", "round"], select(y,Not(:timestamp)))
-
-        # Add unique constraint for composite key in iterations table
-        db_add_unique_constraint("iterations", ["paper_id", "round"])
-
-        # add missing columns to iterations
-        mi = db_add_missing_columns("iterations")
-        return new_papers,new_iters
-    else
-        return y
-    end
+    # Add missing columns to iterations if needed
+    mi = db_add_missing_columns("iterations")
+    
+    return y
 end
 
 function db_read_all_arrivals()
@@ -343,7 +344,7 @@ reads the entire google form about arrivals from the JO
 does some quick cleaning of names
 by default appends new rows to the local database
 """
-function read_google_arrivals( ; append = true)
+function read_google_arrivals( )
 
     gs4_auth()
     gs_arrivals = gs4_arrivals()
@@ -362,18 +363,15 @@ function read_google_arrivals( ; append = true)
         df.paper_id .= google_paperid(df,"paper_id")
         df.journal .= clean_journalname.(df.journal)
         df.paper_slug = get_paper_slug.(df.surname_of_author,df.paper_id)
+        df.processed .= false
     end
 
     # save in db
     # Read existing table, or create it
     db_write_backup("arrivals",df)
 
-    if append
-        new_rows = db_append_new_df("form_arrivals","paper_id",df)
-        return new_rows
-    else
-        return df
-    end
+    new_rows = db_append_new_df("form_arrivals","paper_id",df)
+    return new_rows
 end
 
 """
@@ -463,59 +461,10 @@ function prepare_arrivals_for_db(df0::DataFrame)
     df.data_statement    = Array{Union{Missing, String}}(missing, nrow(df))
     df.software          = Array{Union{Missing, String}}(missing, nrow(df))
     df.github_url        = Array{Union{Missing, String}}(missing, nrow(df))
+    df.gh_org_repo        = Array{Union{Missing, String}}(missing, nrow(df))
 
-    return df
-   
-    
-
-    # # cycle through each row and check what needs to be done in each case.
-    # @debug "$(nrow(df)) new arrivals to process"
-    # for ir in eachrow(df)
-
-    #     @info "processing new arrival $(ir.paper_id) from $(ir.journal)"
-
-    #     # check that dropbox folder exists and is populated
-    #     pname = join([ir.surname_of_author, ir.paper_id], "-")
-    #     dpath = joinpath(dropbox(), "package-arrivals", replace(ir.journal, ":" => "-"), pname)
-    #     if !isdir(dpath)
-    #         @warn "Dropbox folder does not exist for $(pname)"
-    #     else
-    #         @info "Dropbox does exist:"
-    #         printwalkdir(dpath)
-    #     end
-        
-    #     choice = ask(DefaultPrompt(["y", "no"], 1, "Verified dropbox - Good to continue?"))
-    #     if choice == "y"
-    #         println("Continuing with package")
-    #     else
-    #         println("Stopping process")
-    #         return 1
-    #     end
-
-    #     if ir.is_confidential
-    #         @info "JO says there is confidential data in the package"
-    #         choice = ask(DefaultPrompt(["y", "no"], 1, "send file request upload link?"))
-    #         if choice == "y"
-    #             # create dropbox file request
-
-    #             # draft email to authors with link
-
-    #             # add FR id to ir.
-
-    #         else
-    #             @info "not sending file request link"
-    #         end
-    #     end
-
-    #     choice = ask(DefaultPrompt(["y", "no"], 1, "Package complete and ready for dispatch?"))
-    #     if choice == "y"
-    #         # nothing to do, status is correct
-    #     else
-    #         ir.status = "new_arrival_missing"
-    #     end
-
-    # end
-    return df
+    # don't return the processed column
+    return select!(df, Not(:processed))
 end
 
 

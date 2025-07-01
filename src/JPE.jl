@@ -28,6 +28,7 @@ using PyCall
 using Chain
 using Infiltrator
 using CSV
+using DataFramesMeta
 
 global dbox_token = ""
 
@@ -42,6 +43,7 @@ include("snippets.jl")
 include("gmailing.jl")
 include("github.jl")
 include("actions.jl")
+include("zip.jl")
 
 
 function dbox_set_token()
@@ -75,6 +77,10 @@ function __init__()
 
     # 2. gmail API
     @pyinclude(joinpath(@__DIR__,"gmail_client.py"))
+
+    if haskey(ENV,"JPE_TEST")
+        @info "running in test mode"
+    end
 
     @info "Module loaded ok"
 
