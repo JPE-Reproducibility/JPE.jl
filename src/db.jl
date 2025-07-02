@@ -1,4 +1,4 @@
-
+db_statuses() = ["new_arrival","with_author","with_replicator","replicator_back_de","author_back_de","acceptable_package","published_package"]
 
 function db_release_connection()
     lock(DB_LOCK) do
@@ -155,6 +155,53 @@ function db_update_cell(table::String,whereclause,var,val)
     end
 end
 
+function db_rollback()
+    with_db() do con
+        DBInterface.execute(con, "ROLLBACK")
+    end
+end
+
+function db_update_status(paperID,status)
+    if status ∉ db_statuses()
+        throw(ArgumentError("invalid status provided: $status. needs to be one of $(db_statuses())"))
+    end
+    with_db() do con
+        DBInterface.execute(con, "BEGIN TRANSACTION")
+        stmt = DBInterface.prepare(con, """
+        UPDATE papers
+        SET status = ?
+        WHERE paper_id = ?
+        """
+        )
+        DBInterface.execute(stmt, (status,paperID,))
+        DBInterface.execute(con, "COMMIT")  # Explicit commit
+    end
+end
+
+function db_filter_status(status::String)
+    if status ∉ db_statuses()
+        throw(ArgumentError("invalid status provided: $status. needs to be one of $(db_statuses())"))
+    end
+        
+    with_db() do con
+        DBInterface.execute(con, "SELECT * FROM papers WHERE status = ?", (status,)) |> DataFrame
+    end
+end
+function db_filter_status(status1::String,status2::String)
+    if (status1 ∉ db_statuses()) || (status2 ∉ db_statuses())
+        throw(ArgumentError("invalid status provided: $status1, $status2. needs to be one of $(db_statuses())"))
+    end
+    with_db() do con
+        DBInterface.execute(con, "SELECT * FROM papers WHERE status = ? OR status = ?", (status1,status2,)) |> DataFrame
+    end
+end
+
+function db_filter_paper(id)
+    with_db() do con
+        DBInterface.execute(con, "SELECT * FROM papers WHERE paper_id = ?", (id,)) |> DataFrame
+    end
+end
+
 
 function db_table_exists(table::String)
     with_db() do con
@@ -235,7 +282,6 @@ function db_get_table_schema(table::String)
             "comments" => Dict(:type => "VARCHAR", :constraints => ""),
             "paper_slug" => Dict(:type => "VARCHAR", :constraints => ""),
             "first_arrival_date" => Dict(:type => "DATE", :constraints => ""),
-            "status" => Dict(:type => "VARCHAR", :constraints => ""),
             "round" => Dict(:type => "INTEGER", :constraints => ""),
             "replicator1" => Dict(:type => "VARCHAR", :constraints => ""),
             "replicator2" => Dict(:type => "VARCHAR", :constraints => ""),
@@ -254,8 +300,6 @@ function db_get_table_schema(table::String)
             "date_assigned_repl" => Dict(:type => "DATE", :constraints => ""),
             "date_completed_repl" => Dict(:type => "DATE", :constraints => ""),
             "date_decision_de" => Dict(:type => "DATE", :constraints => ""),
-            "file_request_id" => Dict(:type => "VARCHAR", :constraints => ""),
-            "file_request_url" => Dict(:type => "VARCHAR", :constraints => ""),
             "decision_de" => Dict(:type => "VARCHAR", :constraints => ""),
             "fr_path_apps" => Dict(:type => "VARCHAR", :constraints => ""),
             "fr_path_full" => Dict(:type => "VARCHAR", :constraints => ""),

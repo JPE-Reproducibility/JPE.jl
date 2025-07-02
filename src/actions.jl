@@ -5,12 +5,19 @@ send packages to replicators
 this happens after authors submitted their packages via file request link
 """
 function dispatch()
-    rows = db_df_where("papers","status","author_back_de")
+    rows = db_filter_status("author_back_de")
 
     # p = papers
     for r in eachrow(rows)
-        preprocess(r.paper_id)
-        assign(r.paper_id)  # needs to prompt for which replicator
+        cid = case_id(r.journal,r.surname_of_author,r.paper_id,r.round)
+        println("dispatch $cid ?")
+        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
+        if request(yes_no_menu) == 1
+            preprocess(r.paper_id)
+            assign(r.paper_id)  # needs to prompt for which replicator
+        else
+            println("skipping $cid")
+        end
     end
 end
 
@@ -234,23 +241,6 @@ function assign_replicators(paperID, selection)
     current_iteration = selection.current_iteration
     is_subsequent_round = selection.is_subsequent_round
     
-    # Update iterations table
-    db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "replicator1", primary_email)
-    db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "date_assigned_repl", today())
-    
-    if !isnothing(secondary_email)
-        db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "replicator2", secondary_email)
-    end
-    
-    # Get submission time from Dropbox and update
-    submit_time = dbox_fr_submit_time(dbox_token, current_iteration.file_request_path)
-    if !isnothing(submit_time)
-        db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "date_arrived_from_authors", Date(submit_time))
-    end
-    
-    # Update papers table status
-    db_update_cell("papers", "paper_id = '$(paperID)'", "status", "with_replicator")
-    
     # Send email to replicators
     # Get necessary information for email
     download_url = dbox_link_at_path(current_iteration.file_request_path, dbox_token)
@@ -267,6 +257,25 @@ function assign_replicators(paperID, selection)
     else
         gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, back=is_subsequent_round)
     end
+
+     
+    # last thing: Update database entries
+
+    # Update iterations table
+    db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "replicator1", primary_email)
+    db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "date_assigned_repl", today())
+    
+    if !isnothing(secondary_email)
+        db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "replicator2", secondary_email)
+    end
+    
+    # Get submission time from Dropbox and update
+    submit_time = dbox_fr_submit_time(dbox_token, current_iteration.file_request_path)
+    if !isnothing(submit_time)
+        db_update_cell("iterations", "paper_id = '$(paperID)' AND round = $(current_round)", "date_arrived_from_authors", Date(submit_time))
+    end
+
+    db_update_status(paperID, "with_replicator")
     
     println("✅ Successfully assigned paper $(paperID) to replicators")
     return (primary=primary_email, secondary=secondary_email)
@@ -281,17 +290,6 @@ function assign(paperID)
     
     # Assign replicators
     return assign_replicators(paperID, selection)
-end
-
-# list all papers that have been invited to submit
-function list_arrivals_waiting()
-    # 1. read papers table
-    papers = db_df("papers")
-
-    # 2. find papers with status "new_arrival" and round 1
-
-    # 3. return those IDs
-
 end
 
 function collect_reports()
@@ -421,19 +419,59 @@ function prepare_rnrs()
     # set status of paper_id in papers to "with_author", set date_with_authors to today()
 end
 
-function collect_file_requests()
+
+function monitor_file_requests()
     # filter papers for status "with_author"
-    rows = db_df_where("papers","status","with_author")
+    i = @chain db_df("papers") begin
+        subset(:status => ByRow(.∈(Ref(["with_author","new_arrival"]))))
+        select(:status, :paper_id)
+        leftjoin(db_df("iterations"), on = [:paper_id])
+        subset(:round => (x -> x .== maximum(x)))
+    end
 
-    for r in eachrow(rows)
+    pkg_arrived = NamedTuple[]
+    pkg_waiting = NamedTuple[]
+    pap_arrived = NamedTuple[]
+    pap_waiting = NamedTuple[]
+
+    @info "checking packages..."
+    for r in eachrow(i)
         # get file_request id and check whether arrived
+        println("  📦 $(r.paper_slug)")
 
-        # set papers.status= "author_back_de"
+        if dbox_fr_arrived(dbox_token,r.file_request_id_pkg)["file_count"] > 0
+            push!(pkg_arrived,(journal = r.journal,paper_id = r.paper_id, round = r.round,slug = r.paper_slug))
+        else
+            push!(pkg_waiting,(journal = r.journal,paper_id = r.paper_id, round = r.round,slug = r.paper_slug))
+        end
 
+        if dbox_fr_arrived(dbox_token,r.file_request_id_paper)["file_count"] > 0
+            push!(pap_arrived,(journal = r.journal,paper_id = r.paper_id, round = r.round,slug = r.paper_slug))
+        else
+            push!(pap_waiting,(journal = r.journal,paper_id = r.paper_id, round = r.round,slug = r.paper_slug))
+        end
+
+       
         # in iterations, set date_arrived etc
 
     end
+    waiting = DataFrame(pkg_waiting)
+    papwaiting = DataFrame(pap_waiting)
+    arrived = DataFrame(pkg_arrived)
+    df_reminders = nothing
 
+    if nrow(arrived) > 0
+        reminders = intersect(arrived.paper_id,papwaiting.paper_id)  
+        if length(reminders) > 0
+            df_reminders = @chain papwaiting begin
+                subset(:paper_id => ByRow(∈(reminders)))
+            end
+        end
+    end
 
-    
+    for a in eachrow(arrived)
+        db_update_status(a.paper_id,"author_back_de")
+    end
+
+    return Dict(:waiting => waiting, :arrived => arrived, :remindJO => df_reminders) 
 end

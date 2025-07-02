@@ -53,3 +53,7 @@ end
 function dbox_fr_exists(token,dest)
     py"file_request_exists"(token,dest)
 end
+
+function dbox_fr_arrived(token,id)
+    py"check_file_request_submissions"(token, id)
+end

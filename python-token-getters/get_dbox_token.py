@@ -13,8 +13,8 @@ APP_SECRET = os.environ["JPE_DBOX_APP_SECRET"]
 REDIRECT_URI = 'http://localhost:53682'  # you need to set that URI on the dropbox UI for the app
 
 # Step 1: Build authorization URL
-scopes = "file_requests.write file_requests.write files.content.write files.content.read files.metadata.read"
-scope_param = urllib.parse.quote(scopes)
+scopes = "file_requests.write file_requests.write files.content.write files.content.read files.metadata.read sharing.write"
+scope_param = scopes
 
 auth_url = (
     f"https://www.dropbox.com/oauth2/authorize"

@@ -9,7 +9,7 @@ function gmail_assign(first1,email1,caseID,download_url, repo_url; first2 = noth
     else
         "I assigned you the $caseID package"
     end
-    to = isnothing(email2) ? [email1] : [email1, email2]
+    to = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
     body = gmail_assign_body(first1,caseID,download_url,repo_url,first2 = first2, back = back)
     gmail_send(
         to,
@@ -21,6 +21,8 @@ end
 
 
 function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothing,back = false)
+
+    deadline = Dates.format(today() + Day(10), dateformat"d U Y")
 
     repnames = isnothing(first2) ? first1 : string(first1," and ",first2)
 
@@ -45,16 +47,60 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
     end
         
     m2 = """
-        You need two pieces to get started:
+        <h2>Getting Started with Report 👩🏽‍💻🧑🏿‍💻</h2>
+
+        Start with this table:
         <br>
+        <br>
+        
+        <table border="1" cellpadding="4" cellspacing="0" width="100%">
+        <tr>
+            <td width="20%">Case ID</td>
+            <td>$(caseID)</td>
+        </tr>
+        <tr>
+            <td width="20%">Full Package Download Link</td>
+            <td>$(download_url)</td>
+        </tr>
+        <tr>
+            <td width="20%">git repo</td>
+            <td>$(repo_url)</td>
+        </tr>
+        <tr>
+            <td width="20%">Report Form</td>
+            <td>https://forms.gle/u9Mp87shmZc94gzT9</td>
+        </tr>
+        <tr>
+            <td width="20%">Deadline</td>
+            <td>$(deadline)</td>
+        </tr>
+        </table>
+      
+        <br>
+        Go to the git repo and look at the readme, which contains step by step instructions.
+
+        <h2>Report Submission 🗒️</h2>
 
         <ol>
-        <li>This link to download the submitted package: $download_url </li>
-        <li>This link to access the repo for this package on github: $repo_url You will find the template report in that repository.</li>
+        <li>You must edit the <code>.qmd</code> in the git repo, and compile it locally to pdf format. I recommend using the typst engine inside quarto, works much better than latex.</li>
+        <li>Once you have the report compiled, committed, and pushed back to the remote, you <b>must</b> fill out this online form: https://forms.gle/u9Mp87shmZc94gzT9. <i>This will determine the amount of time (days) you spent on this, so until you submit the form, you keep wasting days</i>. Also, it is where you log your hours, so no submitted form, no money.
+        </li>
         </ol>
-        ⚠️ Do not forward or otherwise share the content in this email.
+
+        <h2>Deadline ⏰</h2>
+
+        As usual, we aim for your report to arrive within the next 10 days, i.e. by $(deadline).
+
+
+        <h2>Warning ⚠️</h2>
+
+
+        ⚠️ Do not forward or otherwise share the content in this email. You are bound by a confidentiality agreement with the University of Chicago - and I trust you, so don't let me down.
         <br>
         <br>
+
+        <h2>Help?</h2>
+
         Don't hesitate to reach out on slack for any ongoing issues with the replication. Let's talk about computational requirements there etc.
         <br>
         <br>
@@ -116,7 +162,7 @@ function gmail_rnr(first,paperID,title,url,email1,attachment;email2 = nothing)
         error("the file $attachment does not exist")
     end
 
-    to = isnothing(email2) ? [email1] : [email1, email2]
+    to = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
     body = gmail_rnr_body(first,paperID,title,url)
     gmail_draft(
         to,
@@ -179,24 +225,22 @@ function gmail_rnr_body(first,paperID,title,url)
 end
 
 
-
-
 function gmail_file_request(name,paperID,title,url,email1;email2 = nothing, JO = false)
     if JO
         body = gmail_file_request_JO_body(name,paperID,title,url)
     gmail_send(
         email1,
-        "Request for Paper (PDF) upload from DE",
+        "Request for Paper (PDF) upload from DE for $paperID",
         body,
         []
     )
 
     else
-        to = isnothing(email2) ? [email1] : [email1, email2]
+        to = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
         body = gmail_file_request_body(name,paperID,title,url)
         gmail_send(
             to,
-            "JPE Replication Package Upload Request",
+            "JPE Replication Package $paperID Upload Request",
             body,
             []
         )

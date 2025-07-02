@@ -150,8 +150,8 @@ function setup_dropbox_structure!(r::DataFrameRow, dbox_token)
     # Create file requests if needed
     @debug "fr exists?" dbox_fr_exists(dbox_token,r.repl_package_path)
     # if !dbox_fr_exists(dbox_token,r.repl_package_path)
-        fr_pkg   = dbox_create_file_request(r.repl_package_path, "$cid upload", dbox_token)
-        fr_paper = dbox_create_file_request(r.paper_path, "$cid upload", dbox_token)
+        fr_pkg   = dbox_create_file_request(r.repl_package_path, "$(cid) package upload", dbox_token)
+        fr_paper = dbox_create_file_request(r.paper_path, "$(cid) paper upload", dbox_token)
         r.file_request_id_pkg = fr_pkg["id"]
         r.file_request_id_paper = fr_paper["id"]
         r.file_request_url_pkg = fr_pkg["url"]
@@ -238,8 +238,7 @@ function google_arrivals()
         
         # Add row to iterations table (using composite key)
         # We need to exclude timestamp from iterations table
-        iter_row = select(DataFrame([r]), Not(:timestamp))[1, :]
-        iter_df = select(y, Not(:timestamp))
+        iter_row = select(DataFrame([r]), Not([:timestamp,:status]))[1, :]
         db_append_new_row("iterations", ["paper_id", "round"], iter_row)
         
         db_update_cell("form_arrivals", "paper_id = $(r.paper_id)", "processed", true)
