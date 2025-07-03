@@ -233,6 +233,9 @@ function google_arrivals()
         # send email to JO
         gmail_file_request(r.surname_of_author, r.paper_id, r.title, r.file_request_url_paper, JO_email(), JO = true)
         
+        # Update status to "with_author" (was "new_arrival")
+        r.status = "with_author"
+        
         # Add row to papers table using db_append_new_row with the original DataFrame for type information
         db_append_new_row("papers", "paper_id", r)
         

@@ -31,6 +31,8 @@ using Chain
 using Infiltrator
 using CSV
 using DataFramesMeta
+using PrettyTables
+using Statistics
 
 global dbox_token = ""
 
@@ -46,6 +48,12 @@ include("gmailing.jl")
 include("github.jl")
 include("actions.jl")
 include("zip.jl")
+include("reports.jl")
+
+# Export reporting functions
+export global_report, paper_report, replicator_workload_report, time_in_status_report
+# Export database functions
+export db_df, db_filter_paper, db_statuses
 
 
 function dbox_set_token()

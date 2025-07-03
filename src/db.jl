@@ -161,7 +161,7 @@ function db_rollback()
     end
 end
 
-function db_update_status(paperID,status)
+function db_update_status(paperID, status)
     if status ∉ db_statuses()
         throw(ArgumentError("invalid status provided: $status. needs to be one of $(db_statuses())"))
     end
@@ -173,8 +173,306 @@ function db_update_status(paperID,status)
         WHERE paper_id = ?
         """
         )
-        DBInterface.execute(stmt, (status,paperID,))
+        DBInterface.execute(stmt, (status, paperID))
         DBInterface.execute(con, "COMMIT")  # Explicit commit
+    end
+end
+
+"""
+    update_paper_status(paperID, from_status, to_status, f::Function)
+
+Update a paper's status from one status to another within a transaction,
+executing a function that performs additional database operations.
+This ensures that status updates only happen if all operations succeed.
+
+# Arguments
+- `paperID`: The ID of the paper to update
+- `from_status`: The expected current status of the paper
+- `to_status`: The new status to set
+- `f::Function`: A function that takes a database connection and performs additional operations
+
+# Returns
+- The result of the function `f`
+
+# Example
+```julia
+update_paper_status(paperID, "with_author", "author_back_de") do con
+    # Additional database operations
+    DBInterface.execute(con, "UPDATE iterations SET date_arrived = ? WHERE paper_id = ?", 
+                       (today(), paperID))
+    return "Success"
+end
+```
+"""
+function update_paper_status(paperID, from_status, to_status, f::Function)
+    if to_status ∉ db_statuses()
+        throw(ArgumentError("invalid target status: $to_status. needs to be one of $(db_statuses())"))
+    end
+    
+    return robust_db_operation() do con
+        # First check if paper exists and has the expected status
+        paper_query = """
+        SELECT status FROM papers WHERE paper_id = ?
+        """
+        paper_result = DataFrame(DBInterface.execute(con, paper_query, (paperID,)))
+        
+        if nrow(paper_result) == 0
+            error("Paper ID $paperID not found")
+        end
+        
+        current_status = paper_result[1, :status]
+        if current_status != from_status
+            error("Paper ID $paperID has status '$current_status', expected '$from_status'")
+        end
+        
+        # Execute the provided function with the connection
+        result = f(con)
+        
+        # Update the status
+        DBInterface.execute(con, """
+        UPDATE papers
+        SET status = ?
+        WHERE paper_id = ?
+        """, (to_status, paperID))
+        
+        return result
+    end
+end
+
+"""
+    update_paper_status(paperID, from_status, to_status, transaction_fn)
+
+Update a paper's status within a transaction, ensuring the status is only changed
+if the transaction function completes successfully.
+
+# Arguments
+- `paperID`: The ID of the paper to update
+- `from_status`: The expected current status (for validation)
+- `to_status`: The new status to set
+- `transaction_fn`: A function that performs the operations that justify the status change
+
+# Returns
+- The result of the transaction function
+"""
+function update_paper_status(paperID, from_status, to_status, transaction_fn)
+    # Verify current status
+    current = db_filter_paper(paperID)
+    if nrow(current) != 1
+        error("Paper ID $paperID not found or has multiple entries")
+    end
+    
+    if current[1, :status] != from_status
+        error("Paper $paperID has status $(current[1, :status]), expected $from_status")
+    end
+    
+    # Execute within transaction
+    return robust_db_operation() do con
+        # Execute the transaction function
+        result = transaction_fn(con)
+        
+        # Update status only if transaction succeeds
+        stmt = DBInterface.prepare(con, """
+        UPDATE papers
+        SET status = ?
+        WHERE paper_id = ?
+        """)
+        DBInterface.execute(stmt, (to_status, paperID))
+        
+        return result
+    end
+end
+
+"""
+    validate_paper_status(paperID)
+
+Validate that a paper's status is consistent with its data in the iterations table.
+
+# Arguments
+- `paperID`: The ID of the paper to validate
+
+# Returns
+- A tuple with (is_valid, issues) where issues is a list of any inconsistencies found
+"""
+function validate_paper_status(paperID)
+    paper = db_filter_paper(paperID)
+    if nrow(paper) != 1
+        return (false, ["Paper ID $paperID not found or has multiple entries"])
+    end
+    
+    r = NamedTuple(paper[1, :])
+    
+    # Get iterations
+    iterations = with_db() do con
+        DataFrame(DBInterface.execute(con, """
+            SELECT * FROM iterations
+            WHERE paper_id = ?
+            ORDER BY round
+        """, (paperID,)))
+    end
+    
+    if nrow(iterations) == 0
+        return (false, ["No iterations found for paper $paperID"])
+    end
+    
+    issues = String[]
+    
+    # Check status against iterations data
+    current_round = r.round
+    current_iter = filter(row -> row.round == current_round, iterations)
+    
+    if nrow(current_iter) != 1
+        push!(issues, "No iteration found for current round $(current_round)")
+        return (false, issues)
+    end
+    
+    iter = NamedTuple(current_iter[1, :])
+    
+    # Validate status based on iteration data
+    if r.status == "new_arrival"
+        # Should have no dates set except first_arrival_date
+        if !ismissing(iter.date_with_authors) || 
+           !ismissing(iter.date_arrived_from_authors) ||
+           !ismissing(iter.date_assigned_repl) ||
+           !ismissing(iter.date_completed_repl) ||
+           !ismissing(iter.date_decision_de)
+            push!(issues, "Status is 'new_arrival' but has dates set that indicate further progress")
+        end
+    elseif r.status == "with_author"
+        # Should have date_with_authors set but not date_arrived_from_authors
+        if ismissing(iter.date_with_authors)
+            push!(issues, "Status is 'with_author' but date_with_authors is not set")
+        end
+        if !ismissing(iter.date_arrived_from_authors)
+            push!(issues, "Status is 'with_author' but date_arrived_from_authors is set")
+        end
+    elseif r.status == "author_back_de"
+        # Should have date_arrived_from_authors set but not date_assigned_repl
+        if ismissing(iter.date_arrived_from_authors)
+            push!(issues, "Status is 'author_back_de' but date_arrived_from_authors is not set")
+        end
+        if !ismissing(iter.date_assigned_repl)
+            push!(issues, "Status is 'author_back_de' but date_assigned_repl is set")
+        end
+    elseif r.status == "with_replicator"
+        # Should have date_assigned_repl set but not date_completed_repl
+        if ismissing(iter.date_assigned_repl)
+            push!(issues, "Status is 'with_replicator' but date_assigned_repl is not set")
+        end
+        if !ismissing(iter.date_completed_repl)
+            push!(issues, "Status is 'with_replicator' but date_completed_repl is set")
+        end
+    elseif r.status == "replicator_back_de"
+        # Should have date_completed_repl set but not date_decision_de
+        if ismissing(iter.date_completed_repl)
+            push!(issues, "Status is 'replicator_back_de' but date_completed_repl is not set")
+        end
+        if !ismissing(iter.date_decision_de)
+            push!(issues, "Status is 'replicator_back_de' but date_decision_de is set")
+        end
+    elseif r.status == "acceptable_package"
+        # Should have date_decision_de set and decision_de == "accept"
+        if ismissing(iter.date_decision_de)
+            push!(issues, "Status is 'acceptable_package' but date_decision_de is not set")
+        end
+        if iter.decision_de != "accept"
+            push!(issues, "Status is 'acceptable_package' but decision_de is not 'accept'")
+        end
+    elseif r.status == "published_package"
+        # Should have date_published set
+        if ismissing(iter.date_published)
+            push!(issues, "Status is 'published_package' but date_published is not set")
+        end
+    else
+        push!(issues, "Unknown status: $(r.status)")
+    end
+    
+    return (isempty(issues), issues)
+end
+
+"""
+    repair_paper_status(paperID)
+
+Attempt to repair a paper's status based on its data in the iterations table.
+
+# Arguments
+- `paperID`: The ID of the paper to repair
+
+# Returns
+- A tuple with (success, old_status, new_status, message)
+"""
+function repair_paper_status(paperID)
+    valid, issues = validate_paper_status(paperID)
+    
+    if valid
+        return (true, nothing, nothing, "Paper status is already valid")
+    end
+    
+    paper = db_filter_paper(paperID)
+    if nrow(paper) != 1
+        return (false, nothing, nothing, "Paper ID $paperID not found or has multiple entries")
+    end
+    
+    r = NamedTuple(paper[1, :])
+    old_status = r.status
+    
+    # Get iterations
+    iterations = with_db() do con
+        DataFrame(DBInterface.execute(con, """
+            SELECT * FROM iterations
+            WHERE paper_id = ?
+            ORDER BY round
+        """, (paperID,)))
+    end
+    
+    if nrow(iterations) == 0
+        return (false, old_status, nothing, "No iterations found for paper $paperID")
+    end
+    
+    current_round = r.round
+    current_iter = filter(row -> row.round == current_round, iterations)
+    
+    if nrow(current_iter) != 1
+        return (false, old_status, nothing, "No iteration found for current round $(current_round)")
+    end
+    
+    iter = NamedTuple(current_iter[1, :])
+    
+    # Determine correct status based on iteration data
+    new_status = nothing
+    
+    if !ismissing(iter.date_published)
+        new_status = "published_package"
+    elseif !ismissing(iter.date_decision_de) && iter.decision_de == "accept"
+        new_status = "acceptable_package"
+    elseif !ismissing(iter.date_completed_repl) && ismissing(iter.date_decision_de)
+        new_status = "replicator_back_de"
+    elseif !ismissing(iter.date_assigned_repl) && ismissing(iter.date_completed_repl)
+        new_status = "with_replicator"
+    elseif !ismissing(iter.date_arrived_from_authors) && ismissing(iter.date_assigned_repl)
+        new_status = "author_back_de"
+    elseif !ismissing(iter.date_with_authors) && ismissing(iter.date_arrived_from_authors)
+        new_status = "with_author"
+    else
+        new_status = "new_arrival"
+    end
+    
+    if new_status == old_status
+        return (true, old_status, new_status, "Status is already correct")
+    end
+    
+    # Update the status
+    try
+        with_db() do con
+            DBInterface.execute(con, """
+                UPDATE papers
+                SET status = ?
+                WHERE paper_id = ?
+            """, (new_status, paperID))
+        end
+        
+        return (true, old_status, new_status, "Status updated from '$old_status' to '$new_status'")
+    catch e
+        return (false, old_status, new_status, "Error updating status: $e")
     end
 end
 
@@ -1200,4 +1498,20 @@ function db_append_new_row(table::String, key_column::Union{String, Vector{Strin
         
         return row
     end
+end
+
+
+
+function db_name(name::AbstractString)
+    # Build case-insensitive regex pattern
+    pattern = "(?i)^" * name  # ^ for prefix match, (?i) for case-insensitive
+
+    # Prepare SQL query
+    query = "SELECT * FROM papers WHERE surname_of_author ~ ?"
+
+    # Run query with parameterized input
+    d = with_db() do con
+        DBInterface.execute(db, query, (pattern,)) |> DataFrame
+    end
+    select(d, :paper_id, :surname_of_author, :round, :status)
 end
