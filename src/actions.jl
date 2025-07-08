@@ -64,10 +64,10 @@ function preprocess(paperID; which_round = nothing)
 
     # * write the _variables.yml file for the report template
     open(joinpath(repoloc,"_variables.yml"), "w") do io
-        println(io, "title: $(r.title)" )
-        println(io, "author: $(r.surname_of_author)" )
+        println(io, "title: \"$(r.title)\"" )
+        println(io, "author: \"$(r.surname_of_author)\"" )
         println(io, "round: $(r.round)" )
-        println(io, "repo: $(r.github_url)" )
+        println(io, "repo: \"$(r.github_url)\"" )
         println(io, "paper_id: $(r.paper_id)" )
     end
     check = readlines(joinpath(repoloc,"_variables.yml"))
