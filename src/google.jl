@@ -423,6 +423,8 @@ function read_google_reports( ; append = true)
     if nrow(df) > 0
         df.paper_id .= google_paperid(df,"paper_id")
         df.journal .= clean_journalname.(df.journal)
+        transform!(df, ["is_$i" => (x -> yesno_bool.(x)) => "is_$i" for i in ["success","confidential","remote","HPC"]])
+        df.shared_confidential .= yesno_bool.(df.shared_confidential)
     end
 
     # save in db

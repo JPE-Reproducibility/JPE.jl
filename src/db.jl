@@ -1,5 +1,12 @@
 db_statuses() = ["new_arrival","with_author","with_replicator","replicator_back_de","author_back_de","acceptable_package","published_package"]
 
+"replace missing with nothing"
+missnothing(x) = ismissing(x) ? nothing : x
+missna(x) = ismissing(x) ? "NA" : x
+
+# yesno_bool = passmissing(x -> lowercase(x) == "yes")
+yesno_bool(x) = ismissing(x) ? false : (lowercase(x) == "yes" ? true : false)
+
 function db_release_connection()
     lock(DB_LOCK) do
         if DB_CONNECTION[] !== nothing
@@ -476,6 +483,98 @@ function repair_paper_status(paperID)
     end
 end
 
+
+
+function set_status!(paperID; force_status = nothing, verbose = true)
+    valid, issues = validate_paper_status(paperID)
+    if valid && isnothing(force_status)
+        verbose && println("✓ Paper status is already valid. No changes needed.")
+        return (true, nothing, nothing, "Paper status is already valid")
+    end
+    
+    # Get paper information
+    paper = db_filter_paper(paperID)
+    if nrow(paper) != 1
+        return (false, nothing, nothing, "Paper ID $paperID not found or has multiple entries")
+    end
+    
+    r = NamedTuple(paper[1, :])
+    old_status = r.status
+    
+    # If force_status is provided, validate it
+    if !isnothing(force_status)
+        if force_status ∉ db_statuses()
+            return (false, old_status, nothing, "Invalid status: $force_status. Must be one of $(db_statuses())")
+        end
+        new_status = force_status
+    else
+        # Determine correct status based on iteration data
+        iterations = with_db() do con
+            DataFrame(DBInterface.execute(con, """
+                SELECT * FROM iterations
+                WHERE paper_id = ?
+                ORDER BY round
+            """, (paperID,)))
+        end
+        
+        if nrow(iterations) == 0
+            return (false, old_status, nothing, "No iterations found for paper $paperID")
+        end
+        
+        current_round = r.round
+        current_iter = filter(row -> row.round == current_round, iterations)
+        
+        if nrow(current_iter) != 1
+            return (false, old_status, nothing, "No iteration found for current round $(current_round)")
+        end
+        
+        iter = NamedTuple(current_iter[1, :])
+        
+        # Determine correct status based on iteration data
+        if !ismissing(iter.date_published)
+            new_status = "published_package"
+        elseif !ismissing(iter.date_decision_de) && iter.decision_de == "accept"
+            new_status = "acceptable_package"
+        elseif !ismissing(iter.date_completed_repl) && ismissing(iter.date_decision_de)
+            new_status = "replicator_back_de"
+        elseif !ismissing(iter.date_assigned_repl) && ismissing(iter.date_completed_repl)
+            new_status = "with_replicator"
+        elseif !ismissing(iter.date_arrived_from_authors) && ismissing(iter.date_assigned_repl)
+            new_status = "author_back_de"
+        elseif !ismissing(iter.date_with_authors) && ismissing(iter.date_arrived_from_authors)
+            new_status = "with_author"
+        else
+            new_status = "new_arrival"
+        end
+    end
+    
+    if new_status == old_status
+        verbose && println("✓ Status is already correct: $old_status")
+        return (true, old_status, new_status, "Status is already correct")
+    end
+    
+    # Update the status using a transaction
+    try
+        result = robust_db_operation() do con
+            DBInterface.execute(con, """
+                UPDATE papers
+                SET status = ?
+                WHERE paper_id = ?
+            """, (new_status, paperID))
+            return true
+        end
+        
+        if result
+            verbose && println("✓ Status updated from '$old_status' to '$new_status'")
+            return (true, old_status, new_status, "Status updated from '$old_status' to '$new_status'")
+        else
+            return (false, old_status, new_status, "Failed to update status")
+        end
+    catch e
+        return (false, old_status, new_status, "Error updating status: $e")
+    end
+end    
+
 function db_filter_status(status::String)
     if status ∉ db_statuses()
         throw(ArgumentError("invalid status provided: $status. needs to be one of $(db_statuses())"))
@@ -497,6 +596,12 @@ end
 function db_filter_paper(id)
     with_db() do con
         DBInterface.execute(con, "SELECT * FROM papers WHERE paper_id = ?", (id,)) |> DataFrame
+    end
+end
+
+function db_filter_iteration(id,round)
+    with_db() do con
+        DBInterface.execute(con, "SELECT * FROM iterations WHERE paper_id = ? AND round = ?", (id,round,)) |> DataFrame
     end
 end
 
@@ -614,7 +719,7 @@ function db_get_table_schema(table::String)
             "_primary_key" => Dict(:columns => ["paper_id", "round"])
         ),
         "reports" => Dict(
-            "paper_id" => Dict(:type => "INTEGER", :constraints => ""),
+            "paper_id" => Dict(:type => "VARCHAR", :constraints => ""),
             "round" => Dict(:type => "INTEGER", :constraints => ""),
             "journal" => Dict(:type => "VARCHAR", :constraints => ""),
             "date_completed_repl" => Dict(:type => "DATE", :constraints => ""),

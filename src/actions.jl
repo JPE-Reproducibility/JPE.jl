@@ -304,98 +304,90 @@ function assign(paperID)
     return assign_replicators(paperID, selection)
 end
 
+function reports_to_process()
+    robust_db_operation() do con
+        # This query finds reports that haven't been fully processed in iterations
+        DataFrame(DBInterface.execute(con, """
+            SELECT r.*
+            FROM reports r
+            LEFT JOIN iterations i ON r.paper_id = i.paper_id AND r.round = i.round
+            WHERE i.date_completed_repl IS NULL 
+               OR i.replicator1 IS NULL
+               OR i.replicator1 <> r.email_of_replicator_1
+        """))
+    end
+end
+
 function collect_reports()
     # First, read any new reports from the Google form
-    read_google_reports(; append = true)
+    # read_google_reports(; append = true)
     
-    # Now get all reports from the reports table
-    all_reports = db_df("reports")
-
     # Make a backup of iterations
     db_write_backup("iterations", db_df("iterations"))
     
-    if nrow(all_reports) > 0
-        # Find reports that need to be processed
-        to_process = robust_db_operation() do con
-            # This query finds reports that haven't been fully processed in iterations
-            DataFrame(DBInterface.execute(con, """
-                SELECT r.*
-                FROM reports r
-                LEFT JOIN iterations i ON r.paper_id = i.paper_id AND r.round = i.round
-                WHERE i.date_completed_repl IS NULL 
-                   OR i.replicator1 IS NULL
-                   OR i.replicator1 <> r.email_of_replicator_1
-            """))
+    to_process = reports_to_process()
+    
+    if nrow(to_process) > 0
+        @info "Found $(nrow(to_process)) reports to process"
+        
+        # Process each report individually with proper error handling
+        for r in eachrow(to_process)
+            try
+                # Update iterations table with report data
+                update_paper_status(r.paper_id, "with_replicator", "replicator_back_de") do con
+                    # robust_db_operation() do con
+                    DBInterface.execute(con, """
+                        UPDATE iterations
+                        SET 
+                            replicator1 = ?,
+                            replicator2 = ?,
+                            hours1 = ?,
+                            hours2 = ?,
+                            is_success = ?,
+                            software = ?,
+                            is_confidential = ?,
+                            is_confidential_shared = ?,
+                            is_remote = ?,
+                            is_HPC = ?,
+                            runtime_code_hours = ?,
+                            data_statement = ?,
+                            repl_comments = ?,
+                            date_completed_repl = ?
+                        WHERE 
+                            paper_id = ? AND
+                            round = ?
+                        """, (
+                        r.email_of_replicator_1,
+                        r.email_of_replicator_2,
+                        r.hours_replicator_1,
+                        r.hours_replicator_2,
+                        r.is_success,
+                        r.software_used_in_package,
+                        r.is_confidential,
+                        r.shared_confidential,
+                        r.is_remote,
+                        r.is_HPC,
+                        r.running_time_of_code,
+                        r.data_statement,
+                        r.comments,
+                        Date(r.timestamp),
+                        r.paper_id,
+                        r.round
+                    ))
+                end
+                
+                @info "Successfully processed report for paper $(r.paper_id), round $(r.round)"
+            catch e
+                @warn "Error processing report for paper $(r.paper_id), round $(r.round): $e"
+            end
         end
         
-        if nrow(to_process) > 0
-            @info "Found $(nrow(to_process)) reports to process"
-            
-            # Process each report individually with proper error handling
-            for r in eachrow(to_process)
-                try
-                    # Update iterations table with report data
-                    robust_db_operation() do con
-                        DBInterface.execute(con, """
-                            UPDATE iterations
-                            SET 
-                                replicator1 = ?,
-                                replicator2 = ?,
-                                hours1 = ?,
-                                hours2 = ?,
-                                is_success = ?,
-                                software = ?,
-                                is_confidential = ?,
-                                is_confidential_shared = ?,
-                                is_remote = ?,
-                                is_HPC = ?,
-                                runtime_code_hours = ?,
-                                data_statement = ?,
-                                repl_comments = ?,
-                                date_completed_repl = ?
-                            WHERE 
-                                paper_id = ? AND
-                                round = ?
-                        """, (
-                            r.email_of_replicator_1,
-                            r.email_of_replicator_2,
-                            r.hours_replicator_1,
-                            r.hours_replicator_2,
-                            r.is_success,
-                            r.software_used_in_package,
-                            r.is_confidential,
-                            r.shared_confidential,
-                            r.is_remote,
-                            r.is_HPC,
-                            r.running_time_of_code,
-                            r.data_statement,
-                            r.comments,
-                            Date(r.timestamp),
-                            r.paper_id,
-                            r.round
-                        ))
-                    end
-                    
-                    # Update paper status
-                    update_paper_status(r.paper_id, "with_replicator", "replicator_back_de") do con
-                        return r
-                    end
-                    
-                    @info "Successfully processed report for paper $(r.paper_id), round $(r.round)"
-                catch e
-                    @warn "Error processing report for paper $(r.paper_id), round $(r.round): $e"
-                end
-            end
-            
-            return to_process
-        else
-            @info "No reports need processing"
-            return nothing
-        end
+        return to_process
     else
-        @info "No reports found in the reports table"
+        @info "No reports need processing"
         return nothing
     end
+
 end
 
 """

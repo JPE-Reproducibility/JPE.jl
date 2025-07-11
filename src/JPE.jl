@@ -21,8 +21,8 @@ module JPE
 using Dates
 using DuckDB
 using DataFrames
-# using Term.Prompts
-# using Term
+using Term.Prompts: DefaultPrompt
+using Term: ask
 using REPL.TerminalMenus
 using Cleaner
 using RCall
