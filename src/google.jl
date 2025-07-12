@@ -106,7 +106,8 @@ gs_date(x) = Date(x, dateformat"dd/mm/yyyy")
 gs_timestamp(x) = Date(x, dateformat"dd/mm/yyyy H:M:S")
 parsebool(x::String) = lowercase(x) == "yes" ? true : false
 
-get_case_id(journal,slug,round) = joinpath(journal, slug, string(round))
+get_case_id(journal,slug,round; fpath = true) = fpath ? joinpath(journal, slug, string(round)) : string(journal,"-", slug,"-R", string(round))
+
 function get_dbox_loc(journal,slug,round; full = false)
     cid = get_case_id(journal,slug,round)
 
@@ -134,6 +135,8 @@ creates file requests for the replication package and paper appendices.
 function setup_dropbox_structure!(r::DataFrameRow, dbox_token)
     # Get case ID for file request naming
     cid = get_case_id(r.journal, r.paper_slug, r.round)
+
+    @debug "creating for $cid"
     
     # Set up paths
     r.file_request_path = get_dbox_loc(r.journal, r.paper_slug, r.round)
@@ -149,6 +152,7 @@ function setup_dropbox_structure!(r::DataFrameRow, dbox_token)
     
     # Create file requests if needed
     @debug "fr exists?" dbox_fr_exists(dbox_token,r.repl_package_path)
+    @debug "old frs" r.file_request_id_pkg r.file_request_url_pkg r.file_request_id_paper r.file_request_url_paper
     # if !dbox_fr_exists(dbox_token,r.repl_package_path)
         fr_pkg   = dbox_create_file_request(r.repl_package_path, "$(cid) package upload", dbox_token)
         fr_paper = dbox_create_file_request(r.paper_path, "$(cid) paper upload", dbox_token)
@@ -156,8 +160,11 @@ function setup_dropbox_structure!(r::DataFrameRow, dbox_token)
         r.file_request_id_paper = fr_paper["id"]
         r.file_request_url_pkg = fr_pkg["url"]
         r.file_request_url_paper = fr_paper["url"]
+    # else
+    #     @warn "file request exists at $(r.repl_package_path)"
     # end
-    @debug r.file_request_id_pkg r.file_request_url_pkg
+    
+    @debug "new frs" r.file_request_id_pkg r.file_request_url_pkg r.file_request_id_paper r.file_request_url_paper
 end
 
 """

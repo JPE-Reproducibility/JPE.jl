@@ -25,6 +25,16 @@ function gh_clone_branch(gh_url,round;to = nothing)
 end
 
 function gh_create_branch_on_github_from(gh_url,from,to)
+    
+    # Check if `to` branch already exists
+    try
+        read(`gh api repos/$(gh_url)/git/ref/heads/$(to)`, String)
+        @warn "Branch $(to) already exists, skipping creation"
+        return
+    catch
+        # Branch doesn't exist, proceed with creation
+    end
+    
     # Get the latest commit SHA of version1
     sha=strip(read(`gh api repos/$(gh_url)/git/ref/heads/$(from) --jq .object.sha`, String))
 

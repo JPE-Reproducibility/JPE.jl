@@ -186,7 +186,7 @@ function db_update_status(paperID, status)
 end
 
 """
-    update_paper_status(paperID, from_status, to_status, f::Function)
+    update_paper_status(f::Function, paperID, from_status, to_status)
 
 Update a paper's status from one status to another within a transaction,
 executing a function that performs additional database operations.
@@ -211,13 +211,11 @@ update_paper_status(paperID, "with_author", "author_back_de") do con
 end
 ```
 """
-function update_paper_status(paperID, from_status, to_status, f::Function)
-    @infiltrate
+function update_paper_status(f::Function, paperID, from_status, to_status; do_update = true)
     if to_status ∉ db_statuses()
         throw(ArgumentError("invalid target status: $to_status. needs to be one of $(db_statuses())"))
     end
 
-    
     return robust_db_operation() do con
         # First check if paper exists and has the expected status
         paper_query = """
@@ -238,59 +236,20 @@ function update_paper_status(paperID, from_status, to_status, f::Function)
         result = f(con)
         
         # Update the status
-        DBInterface.execute(con, """
-        UPDATE papers
-        SET status = ?
-        WHERE paper_id = ?
-        """, (to_status, paperID))
-        
+        if do_update
+            DBInterface.execute(con, """
+            UPDATE papers
+            SET status = ?
+            WHERE paper_id = ?
+            """, (to_status, paperID))
+        else
+            @warn "not updated!"
+        end
+
         return result
     end
 end
 
-"""
-    update_paper_status(paperID, from_status, to_status, transaction_fn)
-
-Update a paper's status within a transaction, ensuring the status is only changed
-if the transaction function completes successfully.
-
-# Arguments
-- `paperID`: The ID of the paper to update
-- `from_status`: The expected current status (for validation)
-- `to_status`: The new status to set
-- `transaction_fn`: A function that performs the operations that justify the status change
-
-# Returns
-- The result of the transaction function
-"""
-# function update_paper_status(paperID, from_status, to_status, transaction_fn)
-#     # Verify current status
-#     @infiltrate
-#     current = db_filter_paper(paperID)
-#     if nrow(current) != 1
-#         error("Paper ID $paperID not found or has multiple entries")
-#     end
-    
-#     if current[1, :status] != from_status
-#         error("Paper $paperID has status $(current[1, :status]), expected $from_status")
-#     end
-    
-#     # Execute within transaction
-#     return robust_db_operation() do con
-#         # Execute the transaction function
-#         result = transaction_fn(con)
-        
-#         # Update status only if transaction succeeds
-#         stmt = DBInterface.prepare(con, """
-#         UPDATE papers
-#         SET status = ?
-#         WHERE paper_id = ?
-#         """)
-#         DBInterface.execute(stmt, (to_status, paperID))
-        
-#         return result
-#     end
-# end
 
 """
     validate_paper_status(paperID)
@@ -531,12 +490,12 @@ function set_status!(paperID; force_status = nothing, verbose = true)
             return (false, old_status, nothing, "No iteration found for current round $(current_round)")
         end
         
-        iter = NamedTuple(current_iter[1, :])
+        iter = current_iter[1, :]
         
         # Determine correct status based on iteration data
-        if !ismissing(iter.date_published)
-            new_status = "published_package"
-        elseif !ismissing(iter.date_decision_de) && iter.decision_de == "accept"
+        # if !ismissing(iter.date_published)
+        #     new_status = "published_package"
+        if !ismissing(iter.date_decision_de) && iter.decision_de == "accept"
             new_status = "acceptable_package"
         elseif !ismissing(iter.date_completed_repl) && ismissing(iter.date_decision_de)
             new_status = "replicator_back_de"
@@ -938,6 +897,19 @@ function db_delete_where(table::String, where_col::String, where_val)
         DBInterface.execute(con, "COMMIT")  # Explicit commit
     end
     @info "Deleted rows from $table where $where_col = $where_val"
+end
+
+function db_delete_where(table::String, where_cols::Vector{String}, where_vals)
+    where_clause = join([col * " = ?" for col in where_cols], " AND ")
+    query = "DELETE FROM $table WHERE $where_clause"
+    
+    with_db() do con
+        stmt = DBInterface.prepare(con, query)
+        DBInterface.execute(con, "BEGIN TRANSACTION")
+        DBInterface.execute(stmt, where_vals)
+        DBInterface.execute(con, "COMMIT") # Explicit commit
+    end
+    @info "Deleted rows from $table where $(join(where_cols .* " = " .* string.(where_vals), " AND "))"
 end
 
 """

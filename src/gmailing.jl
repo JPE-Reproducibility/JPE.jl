@@ -178,10 +178,13 @@ function gmail_rnr_body(first,paperID,title,url)
     <br>
     <br>
     Thank you for providing us with the replication
-    package for your paper $paperID, titled \"$title\".
+    package for your paper titled \"$title\", with manuscript ID $paperID.
     Please find attached the report with the outcome of our checks.
     As you will see in the report, the reproducibility team has identified
     a few issues that need to be fixed.
+
+    <h3>Outline of Issues 📝</h3>
+
 
     <ol>
     <li>Item 1</li>
@@ -208,7 +211,8 @@ function gmail_rnr_body(first,paperID,title,url)
     for another check.
     <br>
     <br>
-    It is our policy to ask for the submission of your replication package within 30 days, i.e., by $(Dates.format(today() + Day(30), dateformat"d U Y")).
+    <h3>Deadline ⏰</h3>
+    It is our policy to ask for the submission of your replication package within 30 days, i.e., by $(Dates.format(today() + Day(30), dateformat"d U Y")). Please let me know if you foresee any problems with meeting this deadline.
     <br>
     <br>
 

@@ -318,8 +318,29 @@ function reports_to_process()
     end
 end
 
+
+
+function reports_2_iterations()
+    [
+        ("replicator1", :email_of_replicator_1),
+        ("replicator2", :email_of_replicator_2),
+        ("hours1", :hours_replicator_1),
+        ("hours2", :hours_replicator_2),
+        ("is_success", :is_success),
+        ("software", :software_used_in_package),
+        ("is_confidential", :is_confidential),
+        ("is_confidential_shared", :shared_confidential),
+        ("is_remote", :is_remote),
+        ("is_HPC", :is_HPC),
+        ("runtime_code_hours", :running_time_of_code),
+        ("data_statement", :data_statement),
+        ("repl_comments", :comments),
+        ("date_completed_repl", :timestamp)
+    ]
+end
+
 """
-    collect_reports_debug()
+    collect_reports()
 
 Debug version of collect_reports that updates each field individually to identify type mismatches.
 This function:
@@ -328,7 +349,7 @@ This function:
 3. For each report, updates fields one at a time with detailed logging
 4. Only updates paper status if all fields are successfully updated
 """
-function collect_reports_debug()
+function collect_reports(;verbose = false)
     # First, read any new reports from the Google form
     read_google_reports(; append = true)
     
@@ -342,34 +363,24 @@ function collect_reports_debug()
         
         # Process each report individually with proper error handling
         for r in eachrow(to_process)
-            println("Processing report for paper $(r.paper_id), round $(r.round)")
+            if verbose
+                println("Processing report for paper $(r.paper_id), round $(r.round)")
+            end
             
             # Track if all updates succeed
             all_updates_successful = true
             
             # Define the fields to update and their corresponding values
             # This maps field names to their values in the report
-            fields_to_update = [
-                ("replicator1", :email_of_replicator_1),
-                ("replicator2", :email_of_replicator_2),
-                ("hours1", :hours_replicator_1),
-                ("hours2", :hours_replicator_2),
-                ("is_success", :is_success),
-                ("software", :software_used_in_package),
-                ("is_confidential", :is_confidential),
-                ("is_confidential_shared", :shared_confidential),
-                ("is_remote", :is_remote),
-                ("is_HPC", :is_HPC),
-                ("runtime_code_hours", :running_time_of_code),
-                ("data_statement", :data_statement),
-                ("repl_comments", :comments),
-                ("date_completed_repl", :timestamp)
-            ]
+       
             
             # Update each field individually
-            for (field, value_sym) in fields_to_update
+            for (field, value_sym) in reports_2_iterations()
                 try
-                    println("  Updating field: $field with value: $(r[value_sym])")
+                    if verbose
+                        println("  Updating field: $field with value: $(r[value_sym])
+                        ")
+                    end
                     
                     # Special handling for date_completed_repl which needs Date conversion
                     value = value_sym == :timestamp ? Date(r[value_sym]) : r[value_sym]
@@ -385,7 +396,9 @@ function collect_reports_debug()
                         DBInterface.execute(stmt, (value, r.paper_id, r.round))
                     end
                     
-                    println("  ✓ Successfully updated $field")
+                    if verbose
+                        println("  ✓ Successfully updated $field")
+                    end
                 catch e
                     println("  ❌ Error updating $field: $e")
                     println("  Value type: $(typeof(r[value_sym]))")
@@ -397,7 +410,9 @@ function collect_reports_debug()
             # Only update paper status if all fields were successfully updated
             if all_updates_successful
                 try
-                    println("All fields updated successfully, updating paper status...")
+                    if verbose
+                        println("All fields updated successfully, updating paper status...")
+                    end
                     
                     # Update paper status outside of update_paper_status to avoid transaction issues
                     robust_db_operation() do con
@@ -424,7 +439,9 @@ function collect_reports_debug()
                         """, ("replicator_back_de", r.paper_id))
                     end
                     
-                    println("✓ Successfully updated paper status to 'replicator_back_de'")
+                    if verbose
+                        println("✓ Successfully updated paper status to 'replicator_back_de'")
+                    end
                 catch e
                     println("❌ Error updating paper status: $e")
                 end
@@ -444,77 +461,77 @@ function collect_reports_debug()
 end
 
 
-function collect_reports()
-    # First, read any new reports from the Google form
-    # read_google_reports(; append = true)
+# function collect_reports()
+#     # First, read any new reports from the Google form
+#     # read_google_reports(; append = true)
     
-    # Make a backup of iterations
-    db_write_backup("iterations", db_df("iterations"))
+#     # Make a backup of iterations
+#     db_write_backup("iterations", db_df("iterations"))
     
-    to_process = reports_to_process()
+#     to_process = reports_to_process()
     
-    if nrow(to_process) > 0
-        @info "Found $(nrow(to_process)) reports to process"
+#     if nrow(to_process) > 0
+#         @info "Found $(nrow(to_process)) reports to process"
         
-        # Process each report individually with proper error handling
-        for r in eachrow(to_process)
-            try
-                # Update iterations table with report data
-                update_paper_status(r.paper_id, "with_replicator", "replicator_back_de") do con
-                    # robust_db_operation() do con
-                    DBInterface.execute(con, """
-                        UPDATE iterations
-                        SET 
-                            replicator1 = ?,
-                            replicator2 = ?,
-                            hours1 = ?,
-                            hours2 = ?,
-                            is_success = ?,
-                            software = ?,
-                            is_confidential = ?,
-                            is_confidential_shared = ?,
-                            is_remote = ?,
-                            is_HPC = ?,
-                            runtime_code_hours = ?,
-                            data_statement = ?,
-                            repl_comments = ?,
-                            date_completed_repl = ?
-                        WHERE 
-                            paper_id = ? AND
-                            round = ?
-                        """, (
-                        r.email_of_replicator_1,
-                        r.email_of_replicator_2,
-                        r.hours_replicator_1,
-                        r.hours_replicator_2,
-                        r.is_success,
-                        r.software_used_in_package,
-                        r.is_confidential,
-                        r.shared_confidential,
-                        r.is_remote,
-                        r.is_HPC,
-                        r.running_time_of_code,
-                        r.data_statement,
-                        r.comments,
-                        Date(r.timestamp),
-                        r.paper_id,
-                        r.round
-                    ))
-                end
+#         # Process each report individually with proper error handling
+#         for r in eachrow(to_process)
+#             try
+#                 # Update iterations table with report data
+#                 update_paper_status(r.paper_id, "with_replicator", "replicator_back_de") do con
+#                     # robust_db_operation() do con
+#                     DBInterface.execute(con, """
+#                         UPDATE iterations
+#                         SET 
+#                             replicator1 = ?,
+#                             replicator2 = ?,
+#                             hours1 = ?,
+#                             hours2 = ?,
+#                             is_success = ?,
+#                             software = ?,
+#                             is_confidential = ?,
+#                             is_confidential_shared = ?,
+#                             is_remote = ?,
+#                             is_HPC = ?,
+#                             runtime_code_hours = ?,
+#                             data_statement = ?,
+#                             repl_comments = ?,
+#                             date_completed_repl = ?
+#                         WHERE 
+#                             paper_id = ? AND
+#                             round = ?
+#                         """, (
+#                         r.email_of_replicator_1,
+#                         r.email_of_replicator_2,
+#                         r.hours_replicator_1,
+#                         r.hours_replicator_2,
+#                         r.is_success,
+#                         r.software_used_in_package,
+#                         r.is_confidential,
+#                         r.shared_confidential,
+#                         r.is_remote,
+#                         r.is_HPC,
+#                         r.running_time_of_code,
+#                         r.data_statement,
+#                         r.comments,
+#                         Date(r.timestamp),
+#                         r.paper_id,
+#                         r.round
+#                     ))
+#                 end
                 
-                @info "Successfully processed report for paper $(r.paper_id), round $(r.round)"
-            catch e
-                @warn "Error processing report for paper $(r.paper_id), round $(r.round): $e"
-            end
-        end
+#                 @info "Successfully processed report for paper $(r.paper_id), round $(r.round)"
+#             catch e
+#                 @warn "Error processing report for paper $(r.paper_id), round $(r.round): $e"
+#             end
+#         end
         
-        return to_process
-    else
-        @info "No reports need processing"
-        return nothing
-    end
+#         return to_process
+#     else
+#         @info "No reports need processing"
+#         return nothing
+#     end
 
-end
+# end
 
 """
     process_editor_decision(paperID, decision)
@@ -593,7 +610,93 @@ function finalize_publication(paperID)
     end
 end
 
+
+function report_pdf_path(r::NamedTuple)
+    localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
+    # Compute PDF path
+    pdf_filename = "$(get_case_id(r.journal, r.paper_slug, r.round, fpath = false)).pdf"
+    pdf_path = joinpath(localloc,"repo", pdf_filename)
+    return pdf_path
+end
+
+
+function write_report(paperID)
+    # Get paper information
+    paper = db_filter_paper(paperID)
+    if nrow(paper) != 1
+        error("Paper ID $paperID not found or has multiple entries")
+    end
+
+    r = NamedTuple(paper[1, :])
+
+    # Validate current status
+    if r.status != "replicator_back_de"
+        error("Paper must be in 'replicator_back_de' status to prepare RnR report")
+    end    
+    # Set up paths
+    localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
+    repo_path = joinpath(localloc, "repo")
+    
+    # Handle repository - check if it exists first
+    if isdir(repo_path)
+        @info "Repository already exists at $repo_path"
+        # Pull latest changes instead of cloning
+        try
+            run(Cmd(`git pull`, dir=repo_path))
+            @info "Pulled latest changes from remote repository"
+        catch e
+            @warn "Could not pull latest changes: $e"
+            @info "You may need to commit your local changes first"
+        end
+    else
+        # Clone if it doesn't exist
+        gh_clone_branch(r.gh_org_repo, "round$(r.round)", to = repo_path)
+        @info "Cloned repository to $repo_path"
+    end
+    
+    # Rename the template file from TEMPLATE.qmd to the correct filename
+    template_path = joinpath(repo_path, "TEMPLATE.qmd")
+    report_filename = "$(get_case_id(r.journal, r.paper_slug, r.round, fpath = false)).qmd"
+    report_path = joinpath(repo_path, report_filename)
+
+    if isfile(template_path) && !isfile(report_path)
+        cp(template_path, report_path)
+        @info "Renamed template to $report_filename"
+    elseif !isfile(template_path)
+        @warn "Template file not found at $template_path"
+    end    
+    # Open VSCode
+    run(`code $repo_path`)
+    
+    # Compute PDF path
+    pdf_filename = "$(get_case_id(r.journal, r.paper_slug, r.round,fpath = false)).pdf"
+    pdf_path = joinpath(repo_path, pdf_filename)
+    println(pdf_path)
+    println(report_pdf_path(r))
+    @assert pdf_path == report_pdf_path(r)
+    
+    @info """
+    Report preparation started:
+    1. Repository available at: $repo_path
+    2. Report template renamed to: $report_filename (if needed)
+    3. VSCode opened for editing
+    
+    IMPORTANT: After editing the report:
+    1. Compile it to generate: $pdf_filename
+    2. Commit your changes: git add . && git commit -m "Updated report"
+    3. Push to GitHub: git push
+    
+    The GitHub repository is the source of truth for the report.
+    The PDF will be used as an attachment in prepare_rnr.
+    """
+    
+    return pdf_path
+end
+
+
 function prepare_rnrs(paperID)
+
+
     # Get paper information
     paper = db_filter_paper(paperID)
     if nrow(paper) != 1
@@ -601,71 +704,80 @@ function prepare_rnrs(paperID)
     end
     
     r = NamedTuple(paper[1, :])
-    
+
     # Validate current status
     if r.status != "replicator_back_de"
         error("Paper must be in 'replicator_back_de' status to prepare RnR")
     end
-    
+
+    @assert isfile(report_pdf_path(r))
+
     # Use the robust status update pattern
-    update_paper_status(paperID, "replicator_back_de", "with_author") do con
+    update_paper_status(paperID, "replicator_back_de", "with_author", do_update = true) do con
         # Get current iteration
         iter_query = """
         SELECT * FROM iterations 
         WHERE paper_id = ? AND round = ?
         """
-        current_iter = DataFrame(DBInterface.execute(con, iter_query, (paperID, r.round)))
+        current_iter = DataFrame(DBInterface.execute(con, iter_query, (paperID, r.round))) |> allowmissing
         
         if nrow(current_iter) != 1
             error("Iteration not found for paper $paperID, round $(r.round)")
         end
         
-        # Update current iteration with decision
-        DBInterface.execute(con, """
-        UPDATE iterations
-        SET date_decision_de = ?, decision_de = 'rnr'
-        WHERE paper_id = ? AND round = ?
-        """, (today(), paperID, r.round))
-        
         # Create new iteration for next round
-        rnew = copy(r)
+        rnew = deepcopy(r)
         rnew = merge(rnew, (round = r.round + 1,))
+        @debug "old round = $(r.round)"
+        @debug "new round = $(rnew.round)"
+        
         
         # Create new branch on repo
         gh_create_branch_on_github_from(r.gh_org_repo, "round$(r.round)", "round$(rnew.round)")
         
         # Insert new iteration row
-        new_iter = copy(current_iter[1, :])
+        new_iters = copy(current_iter)
+        new_iter = new_iters[1,:] # creates a dataframerow
+
         new_iter.round = rnew.round
         new_iter.date_with_authors = today()
         
         # Clear fields that should be reset for new iteration
-        for field in [:replicator1, :replicator2, :hours1, :hours2, :is_success, 
-                      :date_arrived_from_authors, :date_assigned_repl, :date_completed_repl,
-                      :date_decision_de, :decision_de]
+        for field in union([i[1] for i in JPE.reports_2_iterations() ], string.([:replicator1,:replicator2, :hours1, :hours2, :is_success, :date_arrived_from_authors, :date_assigned_repl, :date_completed_repl,:date_decision_de, :decision_de]))
             if hasproperty(new_iter, field)
                 new_iter[field] = missing
             end
         end
-        
-        # Register the new iteration
-        DuckDB.register_data_frame(con, DataFrame([new_iter]), "new_iter")
+
+        # # Set up Dropbox structure for new iteration
+        setup_dropbox_structure!(new_iter, dbox_token)
+
+        # # Register the new iteration
+        DuckDB.register_data_frame(con, DataFrame(new_iter), "new_iter")
         DBInterface.execute(con, "INSERT INTO iterations SELECT * FROM new_iter")
         
-        # Set up Dropbox structure for new iteration
-        setup_dropbox_structure!(NamedTuple(new_iter), dbox_token)
+        # where is the report pdf?
+        attachfile = report_pdf_path(r)
+        @debug attachfile
         
+        # Prepare email draft
+        gmail_rnr(r.firstname_of_author, r.paper_id, r.title, new_iter.file_request_url_pkg, 
+                 r.email_of_author, attachfile,
+                 email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author)
+
         # Update papers table with new round
         DBInterface.execute(con, """
         UPDATE papers
         SET round = ?
         WHERE paper_id = ?
         """, (rnew.round, paperID))
-        
-        # Prepare email draft
-        gmail_rnr(r.firstname_of_author, r.paper_id, r.title, new_iter.file_request_url_pkg, 
-                 r.email_of_author, 
-                 email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author)
+
+        # Update old iteration with decision
+        DBInterface.execute(con, """
+        UPDATE iterations
+        SET date_decision_de = ?, decision_de = 'rnr'
+        WHERE paper_id = ? AND round = ?
+        """, (today(), paperID, r.round))
         
         return new_iter
     end
@@ -678,8 +790,11 @@ function monitor_file_requests()
         subset(:status => ByRow(.∈(Ref(["with_author","new_arrival"]))))
         select(:status, :paper_id)
         leftjoin(db_df("iterations"), on = [:paper_id])
+        groupby(:paper_id)
         subset(:round => (x -> x .== maximum(x)))
+        combine(identity)  # or select the columns you want
     end
+    return i
 
     pkg_arrived = NamedTuple[]
     pkg_waiting = NamedTuple[]
@@ -713,7 +828,7 @@ function monitor_file_requests()
     arrived = DataFrame(pkg_arrived)
     df_reminders = nothing
 
-    if nrow(arrived) > 0
+    if (nrow(arrived) > 0) && (nrow(papwaiting) > 0)
         reminders = intersect(arrived.paper_id, papwaiting.paper_id)  
         if length(reminders) > 0
             df_reminders = @chain papwaiting begin
@@ -741,6 +856,7 @@ function monitor_file_requests()
                     SET date_arrived_from_authors = ?
                     WHERE paper_id = ? AND round = ?
                     """, (Date(submit_time), a.paper_id, a.round))
+                    @info "File request arrived! ✅"
                 end
                 return a
             end
