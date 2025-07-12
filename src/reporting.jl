@@ -656,3 +656,10 @@ function save_report_as_csv(df, path)
     CSV.write(path, df)
     return path
 end
+
+function status_report()
+    @chain db_df("papers") begin
+        groupby(:status)
+        combine(:paper_slug)
+    end
+end

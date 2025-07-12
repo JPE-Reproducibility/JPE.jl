@@ -318,6 +318,132 @@ function reports_to_process()
     end
 end
 
+"""
+    collect_reports_debug()
+
+Debug version of collect_reports that updates each field individually to identify type mismatches.
+This function:
+1. Reads new reports from Google form
+2. Makes a backup of iterations
+3. For each report, updates fields one at a time with detailed logging
+4. Only updates paper status if all fields are successfully updated
+"""
+function collect_reports_debug()
+    # First, read any new reports from the Google form
+    read_google_reports(; append = true)
+    
+    # Make a backup of iterations
+    db_write_backup("iterations", db_df("iterations"))
+    
+    to_process = reports_to_process()
+    
+    if nrow(to_process) > 0
+        @info "Found $(nrow(to_process)) reports to process"
+        
+        # Process each report individually with proper error handling
+        for r in eachrow(to_process)
+            println("Processing report for paper $(r.paper_id), round $(r.round)")
+            
+            # Track if all updates succeed
+            all_updates_successful = true
+            
+            # Define the fields to update and their corresponding values
+            # This maps field names to their values in the report
+            fields_to_update = [
+                ("replicator1", :email_of_replicator_1),
+                ("replicator2", :email_of_replicator_2),
+                ("hours1", :hours_replicator_1),
+                ("hours2", :hours_replicator_2),
+                ("is_success", :is_success),
+                ("software", :software_used_in_package),
+                ("is_confidential", :is_confidential),
+                ("is_confidential_shared", :shared_confidential),
+                ("is_remote", :is_remote),
+                ("is_HPC", :is_HPC),
+                ("runtime_code_hours", :running_time_of_code),
+                ("data_statement", :data_statement),
+                ("repl_comments", :comments),
+                ("date_completed_repl", :timestamp)
+            ]
+            
+            # Update each field individually
+            for (field, value_sym) in fields_to_update
+                try
+                    println("  Updating field: $field with value: $(r[value_sym])")
+                    
+                    # Special handling for date_completed_repl which needs Date conversion
+                    value = value_sym == :timestamp ? Date(r[value_sym]) : r[value_sym]
+                    
+                    # Use robust_db_operation for each field update
+                    robust_db_operation() do con
+                        stmt = DBInterface.prepare(con, """
+                        UPDATE iterations
+                        SET $field = ?
+                        WHERE paper_id = ? AND round = ?
+                        """)
+                        
+                        DBInterface.execute(stmt, (value, r.paper_id, r.round))
+                    end
+                    
+                    println("  ✓ Successfully updated $field")
+                catch e
+                    println("  ❌ Error updating $field: $e")
+                    println("  Value type: $(typeof(r[value_sym]))")
+                    println("  Value: $(r[value_sym])")
+                    all_updates_successful = false
+                end
+            end
+            
+            # Only update paper status if all fields were successfully updated
+            if all_updates_successful
+                try
+                    println("All fields updated successfully, updating paper status...")
+                    
+                    # Update paper status outside of update_paper_status to avoid transaction issues
+                    robust_db_operation() do con
+                        # First check if paper exists and has the expected status
+                        paper_query = """
+                        SELECT status FROM papers WHERE paper_id = ?
+                        """
+                        paper_result = DataFrame(DBInterface.execute(con, paper_query, (r.paper_id,)))
+                        
+                        if nrow(paper_result) == 0
+                            error("Paper ID $(r.paper_id) not found")
+                        end
+                        
+                        current_status = paper_result[1, :status]
+                        if current_status != "with_replicator"
+                            error("Paper ID $(r.paper_id) has status '$current_status', expected 'with_replicator'")
+                        end
+                        
+                        # Update the status
+                        DBInterface.execute(con, """
+                        UPDATE papers
+                        SET status = ?
+                        WHERE paper_id = ?
+                        """, ("replicator_back_de", r.paper_id))
+                    end
+                    
+                    println("✓ Successfully updated paper status to 'replicator_back_de'")
+                catch e
+                    println("❌ Error updating paper status: $e")
+                end
+            else
+                println("⚠️ Not updating paper status due to field update failures")
+            end
+            
+            println("Completed processing report for paper $(r.paper_id), round $(r.round)")
+            println("---------------------------------------------------------")
+        end
+        
+        return to_process
+    else
+        @info "No reports need processing"
+        return nothing
+    end
+end
+
+
 function collect_reports()
     # First, read any new reports from the Google form
     # read_google_reports(; append = true)

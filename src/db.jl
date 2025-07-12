@@ -212,9 +212,11 @@ end
 ```
 """
 function update_paper_status(paperID, from_status, to_status, f::Function)
+    @infiltrate
     if to_status ∉ db_statuses()
         throw(ArgumentError("invalid target status: $to_status. needs to be one of $(db_statuses())"))
     end
+
     
     return robust_db_operation() do con
         # First check if paper exists and has the expected status
@@ -261,33 +263,34 @@ if the transaction function completes successfully.
 # Returns
 - The result of the transaction function
 """
-function update_paper_status(paperID, from_status, to_status, transaction_fn)
-    # Verify current status
-    current = db_filter_paper(paperID)
-    if nrow(current) != 1
-        error("Paper ID $paperID not found or has multiple entries")
-    end
+# function update_paper_status(paperID, from_status, to_status, transaction_fn)
+#     # Verify current status
+#     @infiltrate
+#     current = db_filter_paper(paperID)
+#     if nrow(current) != 1
+#         error("Paper ID $paperID not found or has multiple entries")
+#     end
     
-    if current[1, :status] != from_status
-        error("Paper $paperID has status $(current[1, :status]), expected $from_status")
-    end
+#     if current[1, :status] != from_status
+#         error("Paper $paperID has status $(current[1, :status]), expected $from_status")
+#     end
     
-    # Execute within transaction
-    return robust_db_operation() do con
-        # Execute the transaction function
-        result = transaction_fn(con)
+#     # Execute within transaction
+#     return robust_db_operation() do con
+#         # Execute the transaction function
+#         result = transaction_fn(con)
         
-        # Update status only if transaction succeeds
-        stmt = DBInterface.prepare(con, """
-        UPDATE papers
-        SET status = ?
-        WHERE paper_id = ?
-        """)
-        DBInterface.execute(stmt, (to_status, paperID))
+#         # Update status only if transaction succeeds
+#         stmt = DBInterface.prepare(con, """
+#         UPDATE papers
+#         SET status = ?
+#         WHERE paper_id = ?
+#         """)
+#         DBInterface.execute(stmt, (to_status, paperID))
         
-        return result
-    end
-end
+#         return result
+#     end
+# end
 
 """
     validate_paper_status(paperID)

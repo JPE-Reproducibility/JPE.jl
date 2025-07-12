@@ -48,7 +48,7 @@ include("gmailing.jl")
 include("github.jl")
 include("actions.jl")
 include("zip.jl")
-include("reports.jl")
+include("reporting.jl")
 
 # Export reporting functions
 export global_report, paper_report, replicator_workload_report, time_in_status_report
