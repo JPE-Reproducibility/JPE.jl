@@ -794,7 +794,6 @@ function monitor_file_requests()
         subset(:round => (x -> x .== maximum(x)))
         combine(identity)  # or select the columns you want
     end
-    return i
 
     pkg_arrived = NamedTuple[]
     pkg_waiting = NamedTuple[]
@@ -838,31 +837,35 @@ function monitor_file_requests()
     end
 
     # Use robust status updates
-    for a in eachrow(arrived)
-        try
-            # Get the file request path from iterations
-            iter = @chain db_df("iterations") begin
-                @subset(:paper_id .== a.paper_id)
-                @subset(:round .== a.round)
-                first()
-            end
-            
-            update_paper_status(a.paper_id, "with_author", "author_back_de") do con
-                # Update iterations table with arrival date
-                submit_time = dbox_fr_submit_time(dbox_token, iter.file_request_path)
-                if !isnothing(submit_time)
-                    DBInterface.execute(con, """
-                    UPDATE iterations
-                    SET date_arrived_from_authors = ?
-                    WHERE paper_id = ? AND round = ?
-                    """, (Date(submit_time), a.paper_id, a.round))
-                    @info "File request arrived! ✅"
+    if (nrow(arrived) > 0)
+        for a in eachrow(arrived)
+            try
+                # Get the file request path from iterations
+                iter = @chain db_df("iterations") begin
+                    @subset(:paper_id .== a.paper_id)
+                    @subset(:round .== a.round)
+                    first()
                 end
-                return a
+                
+                update_paper_status(a.paper_id, "with_author", "author_back_de") do con
+                    # Update iterations table with arrival date
+                    submit_time = dbox_fr_submit_time(dbox_token, iter.file_request_path)
+                    if !isnothing(submit_time)
+                        DBInterface.execute(con, """
+                        UPDATE iterations
+                        SET date_arrived_from_authors = ?
+                        WHERE paper_id = ? AND round = ?
+                        """, (Date(submit_time), a.paper_id, a.round))
+                        @info "File request arrived! ✅"
+                    end
+                    return a
+                end
+            catch e
+                @warn "Error updating status for $(a.paper_id): $e"
             end
-        catch e
-            @warn "Error updating status for $(a.paper_id): $e"
         end
+    else
+        @info "No file request arrived ❌"
     end
 
     return Dict(:waiting => waiting, :arrived => arrived, :remindJO => df_reminders) 
