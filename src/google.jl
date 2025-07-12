@@ -371,6 +371,7 @@ function read_google_arrivals( )
         df.processed .= false
     end
 
+    # return df
     # save in db
     # Read existing table, or create it
     db_write_backup("arrivals",df)
