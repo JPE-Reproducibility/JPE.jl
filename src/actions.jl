@@ -23,18 +23,20 @@ end
 
 
 function preprocess(paperID; which_round = nothing)
-    # get row from "papers"
-    rt = db_df_where("papers","paper_id",paperID)
-    if nrow(rt) != 1
-        error("can only get a single row here")
-    end
-    r = NamedTuple(rt[1,:])
-
+    @info "starting to preprocess"
+    # get row from "iterations"
+    p = db_filter_paper(paperID)
     round = if isnothing(which_round)
-        r.round[1]
+        p.round[1]
     else
         which_round
     end
+
+    rt = db_filter_iteration(paperID,round)
+    if nrow(rt) != 1
+        error("can only get a single row here")
+    end
+    r = rt[1,:] # dataframerow
 
     # create a temp dir
     d = tempdir()
@@ -43,7 +45,7 @@ function preprocess(paperID; which_round = nothing)
     cd(d)
 
     # clone branch current "round"
-    gh_clone_branch(r.gh_org_repo,"round$(r.round)", to = repoloc)
+    gh_clone_branch(r.gh_org_repo,"round$(round)", to = repoloc)
 
     # * copy round version from Dropbox to local repo into temp location
     cp(joinpath(r.file_request_path_full,"paper-appendices"),joinpath(repoloc,"paper-appendices"), force = true)
@@ -66,23 +68,25 @@ function preprocess(paperID; which_round = nothing)
     open(joinpath(repoloc,"_variables.yml"), "w") do io
         println(io, "title: \"$(r.title)\"" )
         println(io, "author: \"$(r.surname_of_author)\"" )
-        println(io, "round: $(r.round)" )
+        println(io, "round: $(round)" )
         println(io, "repo: \"$(r.github_url)\"" )
         println(io, "paper_id: $(r.paper_id)" )
     end
-    check = readlines(joinpath(repoloc,"_variables.yml"))
+    @debug readlines(joinpath(repoloc,"_variables.yml"))
+
 
     # * commit all except data
     branch = chomp(read(run(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc)), String))
 
     cmd = """
     git add .
-    git commit -m '🚀 prechecks round $(r.round)'
-    git tag -a round$(r.round) -m 'round$(r.round)'
+    git commit -m '🚀 prechecks round $(round)'
+    git tag -a round$(round) -m 'round$(round) checks'
     git push origin $branch
     """
     gr = read(run(Cmd(`sh -c $cmd`, dir=repoloc)),String)
     
+    cd(o) # go back
 
     # * Push back
     # * Delete local repo
@@ -106,7 +110,7 @@ function select_replicators(paperID)
     # Check if this is a subsequent round
     if maximum(i.round) > 1
         last_round_data = @chain i begin
-            @subset(:round .== maximum(:round))
+            @subset(:round .== (maximum(:round) .- 1))
             first()  # Get the first (and should be only) row
         end
         
@@ -119,6 +123,9 @@ function select_replicators(paperID)
     current_iteration = @chain i begin
         @subset(:round .== maximum(:round))
         first()
+    end
+    first_iteration = @chain i begin
+        @subset(:round .== 1)
     end
     
     # Get available replicators
@@ -134,9 +141,9 @@ function select_replicators(paperID)
         name = r.name
         
         # Mark previous replicators with a prefix instead of highlighting
-        if !isnothing(prev_replicator1) && email == prev_replicator1
+        if (!isnothing(prev_replicator1) && !ismissing(prev_replicator1)) && email == prev_replicator1
             display_text = "🔄 $name ($email) [previous primary]"
-        elseif !isnothing(prev_replicator2) && email == prev_replicator2
+        elseif (!isnothing(prev_replicator2) && !ismissing(prev_replicator2)) && email == prev_replicator2
             display_text = "🔄 $name ($email) [previous secondary]"
         else
             display_text = "$name ($email)"
@@ -224,6 +231,7 @@ function select_replicators(paperID)
         secondary_name = secondary_name,
         current_round = maximum(i.round),
         current_iteration = current_iteration,
+        first_iteration = first_iteration,
         is_subsequent_round = maximum(i.round) > 1
     )
 end
@@ -240,11 +248,16 @@ function assign_replicators(paperID, selection)
     current_round = selection.current_round
     current_iteration = selection.current_iteration
     is_subsequent_round = selection.is_subsequent_round
+    first_iteration = selection.first_iteration
     
     # Send email to replicators
     # Get necessary information for email
     download_url = dbox_link_at_path(current_iteration.file_request_path, dbox_token)
     repo_url = current_iteration.github_url
+    if is_subsequent_round
+        @warn "copying first round paper and appendix to current round"
+        cp(joinpath(first_iteration.file_request_path_full[1],"paper-appendices"),joinpath(current_iteration.file_request_path_full,"paper-appendices"), force = true)
+    end
     
     # Create case ID for email
     paper_row = db_df_where("papers", "paper_id", paperID)[1, :]
@@ -765,12 +778,14 @@ function prepare_rnrs(paperID)
                  r.email_of_author, attachfile,
                  email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author)
 
-        # Update papers table with new round
+        # Update papers table with new round and file request ids
         DBInterface.execute(con, """
         UPDATE papers
-        SET round = ?
+        SET round = ?,
+        file_request_id_pkg = ?,
+        file_request_id_paper = ?
         WHERE paper_id = ?
-        """, (rnew.round, paperID))
+        """, (rnew.round, new_iter.file_request_id_pkg, new_iter.file_request_id_paper, paperID))
 
         # Update old iteration with decision
         DBInterface.execute(con, """

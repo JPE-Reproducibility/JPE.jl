@@ -567,6 +567,12 @@ function db_filter_iteration(id,round)
     end
 end
 
+function db_filter_iteration(id)
+    with_db() do con
+        DBInterface.execute(con, "SELECT * FROM iterations WHERE paper_id = ?", (id,)) |> DataFrame
+    end
+end
+
 
 function db_table_exists(table::String)
     with_db() do con

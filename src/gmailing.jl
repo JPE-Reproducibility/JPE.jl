@@ -34,20 +34,7 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
         I assigned you the package $caseID.
         <br>
         <br>
-        """
-    else
-        """
-        Hi $(repnames)!
-        <br>
-        <br>
-        The $caseID package is back for the next round.
-        <br>
-        <br>
-        """
-    end
-        
-    m2 = """
-        <h2>Getting Started with Report 👩🏽‍💻🧑🏿‍💻</h2>
+                <h2>Getting Started with Report 👩🏽‍💻🧑🏿‍💻</h2>
 
         Start with this table:
         <br>
@@ -75,6 +62,48 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
             <td>$(deadline)</td>
         </tr>
         </table>
+        """
+    else
+        """
+        Hi $(repnames)!
+        <br>
+        <br>
+        The $caseID package is back for the next round.
+        <br>
+        <br>
+                <h2>Continuing with this package 👩🏽‍💻🧑🏿‍💻</h2>
+
+        Everything is the same:
+        <br>
+        <br>
+        
+        <table border="1" cellpadding="4" cellspacing="0" width="100%">
+        <tr>
+            <td width="20%">Case ID</td>
+            <td>$(caseID)</td>
+        </tr>
+        <tr>
+            <td width="20%">Full Package Download Link</td>
+            <td>$(download_url)</td>
+        </tr>
+        <tr>
+            <td width="20%">git repo <i> caution with branch</i></td>
+            <td>$(repo_url)</td>
+        </tr>
+        <tr>
+            <td width="20%">Report Form</td>
+            <td>https://forms.gle/u9Mp87shmZc94gzT9</td>
+        </tr>
+        <tr>
+            <td width="20%">Deadline</td>
+            <td>$(deadline)</td>
+        </tr>
+        </table>
+        """
+    end
+        
+    m2 = """
+
       
         <br>
         Go to the git repo and look at the readme, which contains step by step instructions.

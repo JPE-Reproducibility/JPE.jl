@@ -57,3 +57,31 @@ end
 function dbox_fr_arrived(token,id)
     py"check_file_request_submissions"(token, id)
 end
+
+"""
+Show the file requests and their status for all iterations of a given paper
+"""
+function dbox_fr_paper(paperID)
+    i = @chain db_filter_iteration(paperID) begin
+        select(:round, r"file_request_id")
+        stack(Not(:round))
+    end
+    i.submitted_files .= 0
+    for r in eachrow(i)
+        r.submitted_files = dbox_fr_arrived(dbox_token, r.value)["file_count"]
+    end
+    println()
+    @info "--- paper $paperID file requests status ----"
+    i
+end
+
+"""
+Show the file request urls and ids
+"""
+function dbox_fr_paper_urls(paperID)
+    i = @chain db_filter_iteration(paperID) begin
+        select(:round, r"file_request_id_", r"file_request_url_")
+        stack(Not(:round))
+    end
+    return i
+end
