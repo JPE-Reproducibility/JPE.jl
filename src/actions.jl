@@ -1,6 +1,47 @@
 
 
 """
+display list of cases which require DE's attention
+"""
+function de_waiting()
+    p = db_filter_status("author_back_de","replicator_back_de")
+    select(p,:paper_id,:paper_slug,:round,:surname_of_author, :status)
+end
+
+function de_process_waiting_reports()
+    p = db_filter_status("replicator_back_de")
+
+    for r in eachrow(p)
+        println("process $(r.paper_slug)?")
+        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option (Yes)
+        if request(yes_no_menu) == 1 
+            # pull report
+            write_report(r.paper_id)
+            println()
+            println("👉 Ready to take a decision?")
+            yes_no_menu = RadioMenu(["No", "Yes"])  # Default is first option (No)
+            if request(yes_no_menu) == 2 
+                println()
+                println("Accept or Revise and Resubmit?")
+                accept_or_reject = RadioMenu(["Accept", "Revise"])  # Default is first option (Accept)
+                if request(accept_or_reject) == 1
+                    process_editor_decision(r.paper_id,"accept")
+                else
+                    process_editor_decision(r.paper_id,"revise")
+                end
+                @info "processed $(r.paper_id) successfully"
+            else
+                @info "no decision for $(r.paper_id) taken"
+                return
+            end
+        else
+            continue    
+        end
+    end
+end
+
+
+"""
 send packages to replicators
 this happens after authors submitted their packages via file request link
 """
@@ -196,7 +237,7 @@ function select_replicators(paperID)
         
         # If there's a previous second replicator, preselect it
         preselect_idx = 1  # Default to first option
-        if !isnothing(prev_replicator2)
+        if !isnothing(prev_replicator2) && !ismissing(prev_replicator2)
             # Find index of prev_replicator2 in secondary_options
             for (idx, (_, email)) in enumerate(secondary_options)
                 if email == prev_replicator2
@@ -589,7 +630,14 @@ function process_editor_decision(paperID, decision)
         end
     elseif decision == "revise"
         # Use the existing prepare_rnrs function but with robust status update
-        prepare_rnrs(paperID)
+        println("Do you want to move on and send this RnR now or not?")
+        yes_no_menu = RadioMenu(["No", "Yes"])  # Default is first option (No)
+        if request(yes_no_menu) == 2 
+            prepare_rnrs(paperID)
+        else
+            @info "decision for $paperID done"
+            return
+        end
     else
         error("Invalid decision: $decision. Must be one of 'accept' or 'revise'")
     end
@@ -765,6 +813,8 @@ function prepare_rnrs(paperID)
         # # Set up Dropbox structure for new iteration
         setup_dropbox_structure!(new_iter, dbox_token)
 
+        sleep(1)  # safety break
+
         # # Register the new iteration
         DuckDB.register_data_frame(con, DataFrame(new_iter), "new_iter")
         DBInterface.execute(con, "INSERT INTO iterations SELECT * FROM new_iter")
@@ -823,6 +873,7 @@ function monitor_file_requests()
 
             if dbox_fr_arrived(dbox_token, r.file_request_id_pkg)["file_count"] > 0
                 push!(pkg_arrived, (journal = r.journal, paper_id = r.paper_id, round = r.round, slug = r.paper_slug))
+                println("File request arrived! ✅")
             else
                 push!(pkg_waiting, (journal = r.journal, paper_id = r.paper_id, round = r.round, slug = r.paper_slug))
             end
