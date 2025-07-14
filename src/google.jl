@@ -375,7 +375,7 @@ function read_google_arrivals( )
     if nrow(df) > 0
         df.paper_id .= google_paperid(df,"paper_id")
         df.journal .= clean_journalname.(df.journal)
-        df.paper_slug = get_paper_slug.(df.surname_of_author,df.paper_id)
+        df.paper_slug = get_paper_slug.(df.journal, df.surname_of_author,df.paper_id)
         df.processed .= false
     end
 
@@ -393,15 +393,6 @@ function read_replicators()
     gs_reports = gs4_get_replicators()
     # create a clean df from gs_arrivals
     df = gs_reports |> polish_names |> DataFrame
-
-    # with_db() do con
-    #     DuckDB.register_data_frame(con,df,"reps")
-    #     DBInterface.execute(con, "CREATE OR REPLACE TABLE replicators AS SELECT * FROM reps")
-
-
-
-    # new_rows = db_append_new_df("replicators", ["paper_id", "round"], df)
-
     return df
 
 end
@@ -467,7 +458,7 @@ function google_paperid(df,var::String)
 end
 
 clean_journalname(j::String) = replace(j, ":" => "-")
-get_paper_slug(last,id) = last * "-" * id
+get_paper_slug(journal,last,id) = journal * "-" * last * "-" * id
 
 
 # adding to papers table
