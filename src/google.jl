@@ -45,20 +45,28 @@ function gs4_mark_processed(d)
     """
 end
 
-function gs4_update_replicators()
+function gs4_get_replicators()
     d = rcopy(R"""
     googlesheets4::read_sheet($(gs_replicators_id()), sheet = 'confirmed')
     """)
-    replicators[] = d
-    d
+end
+
+function gs4_write_replicator_load(d::DataFrame)
+    d2 = select(d, :current_workload)
+    
+    R"""
+    id = $(gs_replicators_id())
+    googlesheets4::range_write(
+        id,
+        data = $(d2),
+        sheet = "confirmed",
+        range = "J1"  
+    )
+    """
 end
 
 function available_replicators(; update = false)
-    d = if update
-        gs4_update_replicators()
-    else
-        replicators[]
-    end
+    d = gs4_get_replicators()
     @chain d begin
         subset("can take +1 package" => ByRow(==("Yes")), skipmissing = true)
         select(:email,"Number of current packages")
@@ -382,7 +390,7 @@ end
 
 function read_replicators()
     gs4_auth()
-    gs_reports = gs4_update_replicators()
+    gs_reports = gs4_get_replicators()
     # create a clean df from gs_arrivals
     df = gs_reports |> polish_names |> DataFrame
 

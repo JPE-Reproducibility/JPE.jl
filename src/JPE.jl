@@ -36,8 +36,6 @@ using Statistics
 
 global dbox_token = ""
 
-replicators = Ref(DataFrame())   # replicators
-
 
 # Write your package code here.
 include("google.jl")

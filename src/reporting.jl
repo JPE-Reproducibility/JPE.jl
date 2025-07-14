@@ -239,51 +239,13 @@ Update the replicator workload in the Google Sheet.
 # Arguments
 - `workload_df::DataFrame`: DataFrame containing replicator workload data
 
-# Returns
-- A string indicating success or failure
 """
 function update_replicator_workload_gsheet(workload_df)
     # Authenticate with Google Sheets
     gs4_auth()
     
-    # Create a simplified DataFrame for updating the Google Sheet
-    update_df = select(workload_df, :email, :current_workload)
+    gs4_write_replicator_load(workload_df)
     
-    # Update the Google Sheet
-    try
-        R"""
-        # Get the sheet ID
-        sheet_id <- $(gs_replicators_id())
-        
-        # Read the current sheet
-        current_sheet <- googlesheets4::read_sheet(sheet_id, sheet = 'confirmed')
-        
-        # For each replicator in workload_df, update their workload in the Google Sheet
-        for (i in 1:nrow($(update_df))) {
-            email <- $(update_df)[i, "email"]
-            workload <- $(update_df)[i, "current_workload"]
-            
-            # Find the row in the current sheet with this email
-            row_idx <- which(current_sheet$email == email)
-            
-            if (length(row_idx) > 0) {
-                # Update the "Number of current packages" column
-                googlesheets4::range_write(
-                    sheet_id,
-                    data = workload,
-                    sheet = "confirmed",
-                    range = paste0("Number of current packages", row_idx + 1)  # +1 for header row
-                )
-            }
-        }
-        """
-        
-        println("\nGoogle Sheet updated successfully")
-        return "Google Sheet updated successfully"
-    catch e
-        println("\nError updating Google Sheet: $e")
-        return "Error updating Google Sheet: $e"
-    end
 end
 
 """
@@ -665,3 +627,34 @@ function status_report()
 end
 
 
+"""
+which (team of) replicator(s) is working on which package and for how many days?
+"""
+function replicator_assignments(;update_gs = true)
+    r = @chain db_filter_status("with_replicator") begin
+        dropmissing(:status, )
+        select(:paper_id,:status, :round)
+        leftjoin(db_df("iterations"), on = [:paper_id, :round])
+        select(:paper_slug, :round, :replicator1, :replicator2, :date_assigned_repl)
+        select(:paper_slug, :round, :replicator1, :replicator2, :date_assigned_repl => (x -> Dates.today() .- x) => :days_with_repl)
+    end
+
+    if update_gs      
+        rr = copy(r)
+        rr.days_with_repl .= Dates.value.(rr.days_with_repl)
+        allowmissing!(rr)
+
+        n = nrow(rr)
+        maxrows = 50
+        append!(rr, DataFrame([fill(missing,maxrows - n) for _ in 1:ncol(rr)], names(rr)))
+        R"""
+        id = $(gs_replicators_id())
+        googlesheets4::write_sheet(
+            data = $(rr),
+            ss = id,
+            sheet = "assigment-tracker"
+        )
+        """
+    end
+    r
+end
