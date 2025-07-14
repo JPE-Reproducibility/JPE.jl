@@ -1597,7 +1597,7 @@ function db_name(name::AbstractString)
 
     # Run query with parameterized input
     d = with_db() do con
-        DBInterface.execute(db, query, (pattern,)) |> DataFrame
+        DBInterface.execute(con, query, (pattern,)) |> DataFrame
     end
     select(d, :paper_id, :surname_of_author, :round, :status)
 end
