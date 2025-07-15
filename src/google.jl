@@ -425,7 +425,7 @@ function read_google_reports( ; append = true)
     )
 
     DataFrames.rename!(df,nm)
-    select!(df, Not([:please_enter_the_password_for_this_form,:did_push]))
+    select!(df, Not([:please_enter_the_password_for_this_form,:did_push, :email_address]))
 
     if nrow(df) > 0
         df.paper_id .= google_paperid(df,"paper_id")
