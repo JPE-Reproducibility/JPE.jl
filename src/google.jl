@@ -241,7 +241,7 @@ function google_arrivals()
         r.github_url = "https://github.com/" * r.gh_org_repo
 
         # send email to authors
-        gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author))
+        gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author), email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author))
 
         r.date_with_authors = Dates.today()
 

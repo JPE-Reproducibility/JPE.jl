@@ -147,20 +147,34 @@ end
 
 case_id(journal,author,ms,round) = string(journal,"-",author,"-",ms,"-R",round)
 
-function gmail_g2g_body(first,paperID)
+function gmail_g2g(first,paperID,title,email1,slug;email2 = nothing)
+
+    to_ = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
+    to = [to_...,  "jpe@press.uchicago.edu"]
+    body = gmail_g2g_body(first,paperID,title)
+    gmail_send(
+        to,
+        "Reproducibility Checks for $(slug): Done.",
+        body,
+        []
+    )
+end
+
+function gmail_g2g_body(first,paperID,title)
 
     m1 = """
     Dear $first,
     <br>
     <br>
-    I am happy to tell you that your replication package for paper $paperID is good to go for me! 🚀
+    I am happy to tell you that your replication package for the paper titled \"$title\", with manuscript ID $paperID is good to go for me! 🚀
+    <br>
     <br>
     Here are the next steps:   
     <br>
 
     <ol>
-    <li>the journal office will do something.</li>
-    <li>you must upload your package on the JPE dataverse. Here are the instructions</li>
+    <li>You must upload your package on the JPE dataverse. The instructions are <a href=https://jpedataeditor.github.io/package.html#after-the-reproducibility-checks-are-completed-publish-your-package>here.</a></li>
+    <li>The JPE journal office will ask you for your final formatted manuscript files.</li>
     </ol>
     <br>
     🚨 It is of great importance that you do not modify the files in your submitted package anymore. We will check the final version of the package you sent us against what you will publish on dataverse in a very strict (and automated) fashion.

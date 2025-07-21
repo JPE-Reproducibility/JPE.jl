@@ -26,10 +26,13 @@ function de_process_waiting_reports()
                 accept_or_reject = RadioMenu(["Accept", "Revise"])  # Default is first option (Accept)
                 if request(accept_or_reject) == 1
                     process_editor_decision(r.paper_id,"accept")
+                    @info "$(r.paper_id) successfully accepted"
+
                 else
                     process_editor_decision(r.paper_id,"revise")
+                    @info "processed $(r.paper_id) successfully"
+                    @info "DRAFT email ready, need to send now!"
                 end
-                @info "processed $(r.paper_id) successfully"
             else
                 @info "no decision for $(r.paper_id) taken"
                 return
@@ -89,7 +92,6 @@ function preprocess(paperID; which_round = nothing)
     gh_clone_branch(r.gh_org_repo,"round$(round)", to = repoloc)
 
     # * copy round version from Dropbox to local repo into temp location
-    cp(joinpath(r.file_request_path_full,"paper-appendices"),joinpath(repoloc,"paper-appendices"), force = true)
     cp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), force = true)
 
     zips = read_and_unzip_directory(joinpath(repoloc,"replication-package"))
@@ -295,10 +297,6 @@ function assign_replicators(paperID, selection)
     # Get necessary information for email
     download_url = dbox_link_at_path(current_iteration.file_request_path, dbox_token)
     repo_url = current_iteration.github_url
-    if is_subsequent_round
-        @warn "copying first round paper and appendix to current round"
-        cp(joinpath(first_iteration.file_request_path_full[1],"paper-appendices"),joinpath(current_iteration.file_request_path_full,"paper-appendices"), force = true)
-    end
     
     # Create case ID for email
     paper_row = db_df_where("papers", "paper_id", paperID)[1, :]
@@ -344,6 +342,7 @@ function assign_replicators(paperID, selection)
     end
     
     println("✅ Successfully assigned paper $(paperID) to replicators")
+    println()
     return (primary=primary_email, secondary=secondary_email)
 end
 
@@ -624,7 +623,7 @@ function process_editor_decision(paperID, decision)
             """, (today(), paperID, r.round))
             
             # Send acceptance email to author
-            gmail_g2g(r.firstname_of_author, r.paper_id)
+            gmail_g2g(r.firstname_of_author, r.paper_id, r.title,r.email_of_author, r.paper_slug, email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author)
             
             return r
         end
@@ -771,7 +770,20 @@ function prepare_rnrs(paperID)
         error("Paper must be in 'replicator_back_de' status to prepare RnR")
     end
 
-    @assert isfile(report_pdf_path(r))
+    try
+        @assert isfile(report_pdf_path(r))
+        println("✅ pdf report found.")
+    catch
+        @warn "you need to compile the report to pdf first!"
+        println("done?")
+        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
+        if request(yes_no_menu) == 1
+            @assert isfile(report_pdf_path(r))
+        else
+            @assert isfile(report_pdf_path(r))
+        end
+    end
+
 
     # Use the robust status update pattern
     update_paper_status(paperID, "replicator_back_de", "with_author", do_update = true) do con
