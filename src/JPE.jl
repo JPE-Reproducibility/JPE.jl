@@ -72,10 +72,6 @@ function close_db()
     DBInterface.close(con)
 end
 
-# caution: there cannot be another open connection at the same time!
-# function open_db()
-#     DBInterface.connect(DuckDB.DB, _DB_PATH)
-# end
 
 function __init__()
     # include two python modules
@@ -87,7 +83,7 @@ function __init__()
     @pyinclude(joinpath(@__DIR__,"gmail_client.py"))
 
     if haskey(ENV,"JPE_TEST")
-        @info "running in test mode"
+        @warn "running in test mode!"
     end
 
     @info "Module loaded ok"
