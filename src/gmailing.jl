@@ -173,8 +173,8 @@ function gmail_g2g_body(first,paperID,title)
     <br>
 
     <ol>
-    <li>You must upload your package on the JPE dataverse. The instructions are <a href=https://jpedataeditor.github.io/package.html#after-the-reproducibility-checks-are-completed-publish-your-package>here.</a></li>
-    <li>The JPE journal office will ask you for your final formatted manuscript files.</li>
+    <li>You must upload your package on the JPE dataverse. The instructions for this step are <a href=https://jpedataeditor.github.io/package.html#after-the-reproducibility-checks-are-completed-publish-your-package>here.</a></li>
+    <li>The JPE journal office will follow up with instructions for preparing and submitting your final manuscript files.</li>
     </ol>
     <br>
     🚨 It is of great importance that you do not modify the files in your submitted package anymore. We will check the final version of the package you sent us against what you will publish on dataverse in a very strict (and automated) fashion.
