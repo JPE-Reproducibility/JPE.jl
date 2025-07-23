@@ -51,8 +51,8 @@ function db_connection_status()
     end
 end
 
-db_write_backup(table,y) = safe_csv_append(joinpath(DB_JPE,"$table.csv"), y)
-db_read_backup(table) = CSV.read(joinpath(DB_JPE,"$table.csv"), DataFrame)
+db_write_backup(table,y) = safe_csv_append(joinpath(JPE_DB,"$table.csv"), y)
+db_read_backup(table) = CSV.read(joinpath(JPE_DB,"$table.csv"), DataFrame)
 
 function safe_csv_append(path::String, df::DataFrame)
     is_new_file = !isfile(path)
@@ -1398,7 +1398,7 @@ function repair_db_from_backups()
     # Check if backups exist
     backup_tables = ["papers", "form_arrivals", "iterations", "reports"]
     for table in backup_tables
-        backup_path = joinpath(DB_JPE, "$table.csv")
+        backup_path = joinpath(JPE_DB, "$table.csv")
         if isfile(backup_path)
             try
                 # Read the backup
@@ -1601,3 +1601,4 @@ function db_name(name::AbstractString)
     end
     select(d, :paper_id, :surname_of_author, :round, :status)
 end
+

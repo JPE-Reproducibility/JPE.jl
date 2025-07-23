@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Set paths
-SOURCE="/Users/floswald/JPE"
-DEST="/Users/floswald/Dropbox/JPE/database"
+SOURCE="${JPE_DB}"
+DEST="${JPE_DB_BACKUPS}"
 DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 
 # Ensure destination exists
@@ -10,8 +10,8 @@ mkdir -p "$DEST"
 
 # Copy the current database file
 cp "$SOURCE/jpe.duckdb" "$DEST/backup_$DATE.duckdb"
-cp "$SOURCE/arrivals.csv" "$DEST/backup_$DATE_arrivals.csv"
-cp "$SOURCE/papers.csv" "$DEST/backup_$DATE_papers.csv"
+cp -v "$SOURCE/arrivals.csv" "$DEST/backup_${DATE}_arrivals.csv"
+cp -v "$SOURCE/papers.csv" "$DEST/backup_${DATE}_papers.csv"
 # cp "$SOURCE/reports.csv" "$DEST/backup_$DATE_reports.csv"
 # cp "$SOURCE/iterations.csv" "$DEST/backup_$DATE_iterations.csv"
 

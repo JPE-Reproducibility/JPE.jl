@@ -47,6 +47,7 @@ include("github.jl")
 include("actions.jl")
 include("zip.jl")
 include("reporting.jl")
+include("db_backups.jl")
 
 # Export reporting functions
 export global_report, paper_report, replicator_workload_report, time_in_status_report
@@ -59,8 +60,12 @@ function dbox_set_token()
 end
 
 # Global persistent database connection
-const DB_PATH = "/Users/floswald/JPE/jpe.duckdb"
-const DB_JPE = "/Users/floswald/JPE"
+const JPE_DB = if haskey(ENV,"JPE_DB")
+    ENV["JPE_DB"] 
+else
+    error("env var JPE_DB must be set to location where you want your local duckdb - set the var and restart julia")
+end
+const DB_PATH = joinpath(JPE_DB,"jpe.duckdb")
 
 const DB_LOCK = ReentrantLock()
 const DB_CONNECTION = Ref{Union{Nothing, Any}}(nothing)
@@ -86,6 +91,13 @@ function __init__()
         @warn "running in test mode!"
     end
 
+    check_database_status()
+    print("Would you like to fetch a database update? (y/n): ")
+    response = readline()
+    if lowercase(strip(response)) == "y"
+        fetch_database_update()
+    end
+    
     @info "Module loaded ok"
 
 end

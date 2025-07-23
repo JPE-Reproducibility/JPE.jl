@@ -112,7 +112,7 @@ gs_reports_id() = "1R74dGMJ2UAfSSVCmjSQLo-qflGRXvNnDGD9ZCEebtTw"
 
 gs_date(x) = Date(x, dateformat"dd/mm/yyyy")
 gs_timestamp(x) = Date(x, dateformat"dd/mm/yyyy H:M:S")
-parsebool(x::String) = lowercase(x) == "yes" ? true : false
+parsebool(x::Union{String,Missing}) = ismissing(x) ? missing : (lowercase(x) == "yes" ? true : false)
 
 get_case_id(journal,slug,round; fpath = true) = fpath ? joinpath(journal, slug, string(round)) : string(journal,"-", slug,"-R", string(round))
 
