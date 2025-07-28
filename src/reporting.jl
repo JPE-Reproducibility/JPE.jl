@@ -658,3 +658,43 @@ function replicator_assignments(;update_gs = true)
     end
     r
 end
+
+
+function papers_statuses()
+    @chain db_df("papers") begin
+        groupby(:status)
+        combine(:paper_slug)
+        pretty_table()
+    end
+end
+
+
+"""
+which papers has every replicator ever worked on
+and what's their status
+"""
+function replicator_history(; email = nothing)
+    as_first = @chain db_df("iterations") begin
+        dropmissing(:replicator1)
+        groupby(:replicator1)
+        combine(:paper_slug, :round, :date_assigned_repl, :date_completed_repl)
+    end
+    DataFrames.rename!(as_first, :replicator1 => :replicator)
+    as_first.replicator_num .= 1
+    as_second = @chain db_df("iterations") begin
+    dropmissing(:replicator2)
+    groupby(:replicator2)
+    combine(:paper_slug, :round, :date_assigned_repl, :date_completed_repl)
+    end
+    DataFrames.rename!(as_second, :replicator2 => :replicator)
+    as_second.replicator_num .= 2
+
+    r = [as_first;  as_second]
+
+    if !isnothing(email)
+        subset!(r, :replicator => ByRow(==(email)))
+    end
+
+    r
+
+end

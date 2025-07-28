@@ -67,7 +67,7 @@ end
 
 
 function preprocess(paperID; which_round = nothing)
-    @info "starting to preprocess"
+    
     # get row from "iterations"
     p = db_filter_paper(paperID)
     round = if isnothing(which_round)
@@ -75,6 +75,7 @@ function preprocess(paperID; which_round = nothing)
     else
         which_round
     end
+    @info "preprocessing $paperID round $round"
 
     rt = db_filter_iteration(paperID,round)
     if nrow(rt) != 1
@@ -117,17 +118,15 @@ function preprocess(paperID; which_round = nothing)
     end
     @debug readlines(joinpath(repoloc,"_variables.yml"))
 
-
     # * commit all except data
-    branch = chomp(read(run(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc)), String))
+    branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
 
     cmd = """
     git add .
     git commit -m '🚀 prechecks round $(round)'
-    git tag -a round$(round) -m 'round$(round) checks'
     git push origin $branch
     """
-    gr = read(run(Cmd(`sh -c $cmd`, dir=repoloc)),String)
+    @show gr = read(Cmd(`sh -c $cmd`, dir=repoloc),String)
     
     cd(o) # go back
 
