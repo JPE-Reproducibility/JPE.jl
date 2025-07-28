@@ -92,6 +92,8 @@ function preprocess(paperID; which_round = nothing)
     # clone branch current "round"
     gh_clone_branch(r.gh_org_repo,"round$(round)", to = repoloc)
 
+    @infiltrate
+    
     # * copy round version from Dropbox to local repo into temp location
     cp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), force = true)
 

@@ -21,6 +21,12 @@ function read_and_unzip_directory(dir_path::String)
     
     # Find zip files
     zip_files = filter(f -> endswith(lowercase(f), ".zip"), files)
+
+    if length(zip_files) == 0
+        @warn "There are no zip files in this location. Probably file request has not downloaded yet to local machine. Check dropbox sync and wait a few minutes."
+        println("seeing this right now in this location:")
+        println(files)
+    end
     
     # Unzip each zip file
     for zip_file in zip_files
