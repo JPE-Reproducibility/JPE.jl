@@ -63,6 +63,13 @@ function dispatch()
             println("skipping $cid")
         end
     end
+
+    @info "updating replicator workload"
+    replicator_workload_report(; save_csv=false, csv_path=nothing, update_gsheet=true)
+
+    @info "updating replicator assignments"
+    replicator_assignments( )
+
 end
 
 
@@ -138,6 +145,89 @@ end
 
 
 """
+Display replicators in a tabular view grouped by OS
+"""
+function display_replicators(rs::DataFrame)
+    # Group replicators by OS
+    os_groups = groupby(rs, :os)
+    
+    # Get unique OS values
+    os_values = unique(rs.os)
+    
+    # Create a dictionary to store replicators by OS
+    os_replicators = Dict{String, Vector{NamedTuple}}()
+    
+    # Process each OS group
+    for os in os_values
+        # Filter replicators for this OS
+        os_rs = filter(r -> r.os == os, eachrow(rs))
+        
+        # Create formatted entries for each replicator
+        formatted_replicators = []
+        
+        for r in os_rs
+            # Determine background color based on can_take_+1_package
+            bg_color = r."can_take_+1_package" == "no" ? :red : :green
+            
+            # Format email with bold if workload > 0
+            email_text = r.email
+            name = "$(r.name) $(r.surname)"
+            email_text,name = if r.current_workload > 0
+                (@bold("$(r.email) ($(r.current_workload))"), @bold("$name"))
+            else
+                r.email,name
+            end
+
+            email_text,name = if r."can_take_+1_package" == "no"
+                @red(email_text), @red(name)
+            else
+                @green(email_text), @green(name)
+            end
+            
+            # Create styled text with background color
+            styled_entry = Term.Panel(
+                Term.Columns([
+                    name,
+                    email_text
+                ])
+            )
+            
+            push!(formatted_replicators, (
+                name = r.name,
+                surname = r.surname,
+                email = r.email,
+                styled_entry = styled_entry
+            ))
+        end
+        
+        os_replicators[os] = formatted_replicators
+    end
+    
+    # Create panels for each OS
+    os_panels = []
+    
+    for os in os_values
+        replicators = os_replicators[os]
+        
+        # Create a panel for this OS
+        entries = [r.styled_entry for r in replicators]
+        
+        os_panel = Term.Panel(
+            Term.Columns(entries, padding=1),
+            title=os,
+            fit=true
+        )
+        
+        push!(os_panels, os_panel)
+    end
+    
+    # Display all OS panels in a row
+    println(Term.Columns(os_panels, padding=2))
+    
+    return rs  # Return the original dataframe for further processing
+end
+
+"""
 Interactively select replicators for a paper
 """
 function select_replicators(paperID)
@@ -174,6 +264,9 @@ function select_replicators(paperID)
     
     # Get available replicators
     rs = read_replicators()
+    
+    # Display replicators in a tabular view grouped by OS
+    display_replicators(rs)
     
     # Create interactive menu for primary replicator selection
     println("\n📋 Select primary replicator for paper ID: $paperID")

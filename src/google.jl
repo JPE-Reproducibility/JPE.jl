@@ -69,7 +69,7 @@ function available_replicators(; update = false)
     d = gs4_get_replicators()
     @chain d begin
         subset("can take +1 package" => ByRow(==("Yes")), skipmissing = true)
-        select(:email,"Number of current packages")
+        select(:email,"current_workload (Data Editor)")
     end
 end
 ar(; update = false) = available_replicators(; update = update)
