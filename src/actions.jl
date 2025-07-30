@@ -148,83 +148,105 @@ end
 Display replicators in a tabular view grouped by OS
 """
 function display_replicators(rs::DataFrame)
-    # Group replicators by OS
-    os_groups = groupby(rs, :os)
-    
-    # Get unique OS values
-    os_values = unique(rs.os)
-    
-    # Create a dictionary to store replicators by OS
-    os_replicators = Dict{String, Vector{NamedTuple}}()
-    
-    # Process each OS group
-    for os in os_values
-        # Filter replicators for this OS
-        os_rs = filter(r -> r.os == os, eachrow(rs))
-        
-        # Create formatted entries for each replicator
-        formatted_replicators = []
-        
-        for r in os_rs
-            # Determine background color based on can_take_+1_package
-            bg_color = r."can_take_+1_package" == "no" ? :red : :green
-            
-            # Format email with bold if workload > 0
-            email_text = r.email
-            name = "$(r.name) $(r.surname)"
-            email_text,name = if r.current_workload > 0
-                (@bold("$(r.email) ($(r.current_workload))"), @bold("$name"))
-            else
-                r.email,name
-            end
-
-            email_text,name = if r."can_take_+1_package" == "no"
-                @red(email_text), @red(name)
-            else
-                @green(email_text), @green(name)
-            end
-            
-            # Create styled text with background color
-            styled_entry = Term.Panel(
-                Term.Columns([
-                    name,
-                    email_text
-                ])
-            )
-            
-            push!(formatted_replicators, (
-                name = r.name,
-                surname = r.surname,
-                email = r.email,
-                styled_entry = styled_entry
-            ))
+    # Function to normalize OS names to just the main family
+    function normalize_os(os_string)
+        os_lower = lowercase(string(os_string))
+        if occursin("windows", os_lower) || occursin("win", os_lower)
+            return "Windows"
+        elseif occursin("mac", os_lower) || occursin("darwin", os_lower) || occursin("osx", os_lower)
+            return "macOS"
+        elseif occursin("linux", os_lower) || occursin("ubuntu", os_lower) || occursin("debian", os_lower) || occursin("centos", os_lower) || occursin("fedora", os_lower)
+            return "Linux"
+        else
+            return "Other"
         end
-        
-        os_replicators[os] = formatted_replicators
     end
     
-    # Create panels for each OS
+    # Add normalized OS column
+    rs_normalized = copy(rs)
+    rs_normalized.os_family = [normalize_os(os) for os in rs_normalized.os]
+
+    rs_normalized.current_workload .= Int.(rs_normalized.current_workload)
+    
+    # Group by normalized OS
+    os_families = unique(rs_normalized.os_family)
+    
+    # Calculate column width based on terminal width and number of OS families
+    terminal_width = 120  # Assume reasonable terminal width
+    padding = 4  # Space between columns
+    column_width = div(terminal_width - (length(os_families) - 1) * padding, length(os_families))
+    
+    # Create panels for each OS family
     os_panels = []
     
-    for os in os_values
-        replicators = os_replicators[os]
+    for os_family in sort(os_families)  # Sort for consistent ordering
+        # Filter replicators for this OS family
+        family_replicators = filter(r -> r.os_family == os_family, eachrow(rs_normalized))
         
-        # Create a panel for this OS
-        entries = [r.styled_entry for r in replicators]
+        # Create content for this OS family
+        content_lines = String[]
         
-        os_panel = Term.Panel(
-            Term.Columns(entries, padding=1),
-            title=os,
-            fit=true
+        for r in family_replicators
+            # Format name and email
+            name = "$(r.name) $(r.surname)"
+            email = r.email
+            
+            # Add workload indicator if > 0
+            if r.current_workload > 0
+                email = "$email ($(r.current_workload))"
+                name = "{bold}$name{/bold}"
+                email = "{bold}$email{/bold}"
+            end
+            
+            # Apply color based on availability
+            if r."can_take_+1_package" == "No"
+                name = "{red}$name{/red}"
+                email = "{red}$email{/red}"
+            else
+                name = "{green}$name{/green}"
+                email = "{green}$email{/green}"
+            end
+            
+            # Add to content (name on one line, email on next, then empty line)
+            push!(content_lines, name)
+            push!(content_lines, email)
+            push!(content_lines, "")  # Empty line between replicators
+        end
+        
+        # Remove the last empty line if it exists
+        if !isempty(content_lines) && content_lines[end] == ""
+            pop!(content_lines)
+        end
+        
+        # Create panel for this OS family
+        content = isempty(content_lines) ? "No replicators" : join(content_lines, "\n")
+        
+        panel = Term.Panel(
+            content,
+            title = os_family,
+            width = column_width,
+            fit = false,  # Don't auto-fit, use specified width
+            justify = :left
         )
         
-        push!(os_panels, os_panel)
+        push!(os_panels, panel)
     end
     
-    # Display all OS panels in a row
-    println(Term.Columns(os_panels, padding=2))
+    # Combine panels horizontally with spacing
+    if !isempty(os_panels)
+        final_layout = os_panels[1]
+        
+        for i in 2:length(os_panels)
+            spacer = " "^padding  # Create spacing between columns
+            final_layout = final_layout * spacer * os_panels[i]
+        end
+        
+        println(final_layout)
+    else
+        println("No replicators found.")
+    end
     
-    return rs  # Return the original dataframe for further processing
+    return rs  # Return the original dataframe
 end
 
 """

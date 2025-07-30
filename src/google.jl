@@ -375,7 +375,7 @@ function read_google_arrivals( )
     if nrow(df) > 0
         df.paper_id .= google_paperid(df,"paper_id")
         df.journal .= clean_journalname.(df.journal)
-        df.paper_slug = get_paper_slug.(df.journal, df.surname_of_author,df.paper_id)
+        df.paper_slug = get_paper_slug.(df.surname_of_author,df.paper_id)
         df.processed .= false
     end
 
@@ -458,6 +458,7 @@ function google_paperid(df,var::String)
 end
 
 clean_journalname(j::String) = replace(j, ":" => "-")
+get_paper_slug(last,id) = last * "-" * id
 get_paper_slug(journal,last,id) = journal * "-" * last * "-" * id
 
 

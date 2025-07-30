@@ -635,26 +635,47 @@ function replicator_assignments(;update_gs = true)
         dropmissing(:status, )
         select(:paper_id,:status, :round)
         leftjoin(db_df("iterations"), on = [:paper_id, :round])
-        select(:paper_slug, :round, :replicator1, :replicator2, :date_assigned_repl)
-        select(:paper_slug, :round, :replicator1, :replicator2, :date_assigned_repl => (x -> Dates.today() .- x) => :days_with_repl)
+        select(:paper_slug, :round, :replicator1, :replicator2,:date_assigned_repl, :date_assigned_repl => (x -> Dates.today() .- x) => :days_with_repl)
     end
 
     if update_gs      
         rr = copy(r)
-        rr.days_with_repl .= Dates.value.(rr.days_with_repl)
+        # rr.days_with_repl .= Dates.value.(rr.days_with_repl)
         allowmissing!(rr)
+        select!(rr,Not(:days_with_repl))
 
         n = nrow(rr)
         maxrows = 50
         append!(rr, DataFrame([fill(missing,maxrows - n) for _ in 1:ncol(rr)], names(rr)))
+        # rr.days_with_repl .= "=ARRAYFORMULA(IF(E2:E$(maxrows)=\"\",\"\",TODAY()-E2:E$(maxrows)))"
+
+        formula_str = [string.("=IF(ISBLANK(E", collect(2:maxrows), "),\"\",TODAY()-E",collect(2:maxrows), ")")...,""]
+        range_str = "F2:F$(maxrows)"
+
         R"""
         id = $(gs_replicators_id())
+        df = $(rr)
+        googlesheets4::range_clear(ss = id,sheet = "assigment-tracker", range = $(range_str))
+        df$days_with_repl = googlesheets4::gs4_formula($(formula_str))
         googlesheets4::write_sheet(
-            data = $(rr),
+            data = df,
             ss = id,
             sheet = "assigment-tracker"
         )
         """
+
+        # R"""
+        # id = $(gs_replicators_id())
+        # df = $(rr)
+        # googlesheets4::range_clear(ss = id,sheet = "assigment-tracker", range = "F2:F$(maxrows)")
+
+        # df[["days_with_repl"]] = googlesheets4::gs4_formula("=ARRAYFORMULA(IF(E2:E$(maxrows)=\"\",\"\",TODAY()-E2:E$(maxrows)))")
+        # googlesheets4::write_sheet(
+        #     data = df,
+        #     ss = id,
+        #     sheet = "assigment-tracker"
+        # )
+        # """
     end
     r
 end
