@@ -105,8 +105,6 @@ function preprocess(paperID; which_round = nothing)
 
     # clone branch current "round"
     gh_clone_branch(r.gh_org_repo,"round$(round)", to = repoloc)
-
-    @infiltrate
     
     # * copy round version from Dropbox to local repo into temp location
     cp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), force = true)
@@ -1052,7 +1050,8 @@ function monitor_file_requests()
                 
                 update_paper_status(a.paper_id, "with_author", "author_back_de") do con
                     # Update iterations table with arrival date
-                    submit_time = dbox_fr_submit_time(dbox_token, iter.file_request_path)
+                    # submit_time = dbox_fr_submit_time(dbox_token, iter.file_request_path)
+                    submit_time = today()
                     if !isnothing(submit_time)
                         DBInterface.execute(con, """
                         UPDATE iterations

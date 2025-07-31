@@ -112,6 +112,9 @@ function __init__()
     end
 
     show_logo()
+    papers_statuses()
+    println()
+
 
 
     # check_database_status()

@@ -162,6 +162,7 @@ function db_update_cell(table::String,whereclause,var,val)
     end
 end
 
+
 function db_rollback()
     with_db() do con
         DBInterface.execute(con, "ROLLBACK")

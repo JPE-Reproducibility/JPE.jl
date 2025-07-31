@@ -34,6 +34,16 @@ function db_bk_create(; verbose::Bool=true, keep_backups::Int=10)
     if dest_dir === nothing
         error("JPE_DB_BACKUPS environment variable not set. Please set it to your backup directory.")
     end
+
+    # Assumes you have a global connection variable (adjust the variable name as needed)
+    try
+        with_db() do conn
+            DuckDB.execute(conn, "CHECKPOINT;")  # Use your existing connection
+        end
+        verbose && println("Forced DuckDB checkpoint before backup")
+    catch e
+        @warn "Failed to checkpoint DuckDB before backup: $e"
+    end
     
     verbose && println("Source: $source_dir")
     verbose && println("Destination: $dest_dir")
