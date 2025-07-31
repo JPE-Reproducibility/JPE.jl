@@ -311,7 +311,17 @@ function calculate_days_in_status(paper)
     if status == "new_arrival"
         date_entered = paper.first_arrival_date
     elseif status == "with_author"
-        date_entered = paper.date_with_authors
+        iter = with_db() do con
+            DataFrame(DBInterface.execute(con, """
+                SELECT date_with_authors
+                FROM iterations
+                WHERE paper_id = ? AND round = ?
+            """, (paper.paper_id, paper.round)))
+        end
+        
+        if nrow(iter) > 0 && !ismissing(iter[1, :date_with_authors])
+            date_entered = iter[1, :date_with_authors]
+        end
     elseif status == "author_back_de"
         # Query iterations table for date_arrived_from_authors
         iter = with_db() do con
@@ -556,7 +566,7 @@ Calculate the average, minimum, and maximum time papers spend in each status.
 # Returns
 - A DataFrame containing time-in-status data
 """
-function calculate_time_in_status(papers_df, iterations_df)
+function calculate_time_in_status(papers_df)
     # Create a DataFrame to store time-in-status data
     statuses = db_statuses()
     n = length(statuses)
@@ -682,13 +692,51 @@ end
 
 
 function papers_statuses()
-    @chain db_df("papers") begin
-        groupby(:status)
-        combine(:paper_slug)
-        pretty_table()
+
+    p = db_df("papers")
+
+    x = DataFrame(paper_id = String[], days_in_status = Union{Missing,Int}[])
+    for r in eachrow(p)
+        push!(x, (r.paper_id, calculate_days_in_status(r)))
     end
+    df = @chain p begin
+        groupby(:status)
+        combine(:paper_slug,:paper_id, :round)
+        select(:status,:paper_slug,:round, :paper_id)
+        leftjoin(x, on = :paper_id)
+        select(Not(:paper_id))
+        sort(:days_in_status)
+    end
+    # days = 
+    # Define highlighters - no Crayons needed!
+    highlighters = (
+        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && data[i, 4] <= 3, 
+                    crayon = Crayon(background = :light_green)),
+        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && 3 < data[i, 4] <= 5, 
+                    crayon = Crayon(background = :green)),
+        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && 5 < data[i, 4] <= 10, 
+                    crayon = Crayon(background = :light_yellow)),                    
+        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && data[i, 4] > 10, 
+                    crayon = Crayon(background = :light_red)),
+        Highlighter(f = (data, i, j) -> ismissing(data[i, 4]), 
+                    crayon = Crayon(background = :white))  # using :white instead of light_gray
+    )
+    pretty_table(df, highlighters = highlighters)
+
 end
 
+# Function to determine color based on days
+function get_color(days)
+    if days <= 3
+        return :light_green
+    elseif days <= 5
+        return :green
+    elseif days <= 10
+        return :yellow
+    else
+        return :light_red
+    end
+end
 
 """
 which papers has every replicator ever worked on

@@ -44,7 +44,7 @@ function de_process_waiting_reports()
 
     @info "creating backup"
     db_bk_create()
-    
+
 end
 
 
@@ -924,6 +924,7 @@ function prepare_rnrs(paperID)
         # Create new iteration for next round
         rnew = deepcopy(r)
         rnew = merge(rnew, (round = r.round + 1,))
+
         @debug "old round = $(r.round)"
         @debug "new round = $(rnew.round)"
         
@@ -967,10 +968,11 @@ function prepare_rnrs(paperID)
         DBInterface.execute(con, """
         UPDATE papers
         SET round = ?,
+        date_with_authors = ?,
         file_request_id_pkg = ?,
         file_request_id_paper = ?
         WHERE paper_id = ?
-        """, (rnew.round, new_iter.file_request_id_pkg, new_iter.file_request_id_paper, paperID))
+        """, (rnew.round, new_iter.date_with_authors, new_iter.file_request_id_pkg, new_iter.file_request_id_paper, paperID))
 
         # Update old iteration with decision
         DBInterface.execute(con, """

@@ -267,6 +267,8 @@ function google_arrivals()
     
     # Add missing columns to iterations if needed
     mi = db_add_missing_columns("iterations")
+
+    db_bk_create()
     
     return y
 end

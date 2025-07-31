@@ -32,8 +32,9 @@ using Chain
 using Infiltrator
 using CSV
 using DataFramesMeta
-using PrettyTables
+using PrettyTables  # re-exports Crayons
 using Statistics
+
 
 global dbox_token = ""
 
@@ -78,6 +79,24 @@ function close_db()
     DBInterface.close(con)
 end
 
+function show_logo()
+    logo = """
+
+       _  _____   ______          _
+      | ||  __ \\ |  ____|      _ | |
+      | || |__) || |__        | || |
+   _  | ||  ___/ |  __|       | || |
+  | |_| || |     | |____  _  _| || |
+  \\_____/|_|     |______|(_)|___||_|
+    """
+    println(Crayon(foreground = :black, bold = true,background = :light_cyan), logo, Crayon(reset = true))
+    println()
+    println(Crayon(foreground = :black, background = :light_cyan, bold = true), "Welcome to JPE.jl!", Crayon(reset = true))
+    println()
+    println()
+end
+
+
 
 function __init__()
     # include two python modules
@@ -92,9 +111,12 @@ function __init__()
         @warn "running in test mode!"
     end
 
-    check_database_status()
+    show_logo()
+
+
+    # check_database_status()
     println()
-    print("Would you like to fetch a database update? (y/n): ")
+    print("Would you like to fetch a database backup? (y/n): ")
     response = readline()
     if lowercase(strip(response)) == "y"
         db_bk_fetch_latest()
