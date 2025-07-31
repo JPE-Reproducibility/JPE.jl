@@ -41,6 +41,10 @@ function de_process_waiting_reports()
             continue    
         end
     end
+
+    @info "creating backup"
+    db_bk_create()
+    
 end
 
 
@@ -69,6 +73,9 @@ function dispatch()
 
     @info "updating replicator assignments"
     replicator_assignments( )
+
+    @info "creating backup"
+    db_bk_create()
 
 end
 

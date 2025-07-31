@@ -1,6 +1,6 @@
 
 """
-    create_backup(; verbose::Bool=true, keep_backups::Int=10)
+    db_bk_create(; verbose::Bool=true, keep_backups::Int=10)
 
 Create a backup of database and CSV files with timestamp, maintaining only the most recent backups.
 
@@ -19,10 +19,10 @@ Create a backup of database and CSV files with timestamp, maintaining only the m
 
 # Example
 ```julia
-create_backup()
+db_bk_create()
 ```
 """
-function create_backup(; verbose::Bool=true, keep_backups::Int=10)
+function db_bk_create(; verbose::Bool=true, keep_backups::Int=10)
     # Get directories from environment variables
     source_dir = get(ENV, "JPE_DB", nothing)
     dest_dir = get(ENV, "JPE_DB_BACKUPS", nothing)
@@ -78,7 +78,7 @@ function create_backup(; verbose::Bool=true, keep_backups::Int=10)
     end
     
     # Clean up old backups (keep only the most recent ones)
-    cleanup_old_backups(keep_backups, verbose)
+    db_bk_clean(keep_backups, verbose)
     
     verbose && println("Backup completed. $(length(copied_files)) files backed up.")
     
@@ -86,12 +86,12 @@ function create_backup(; verbose::Bool=true, keep_backups::Int=10)
 end
 
 """
-    cleanup_old_backups(keep_count::Int, verbose::Bool=true)
+    db_bk_clean(keep_count::Int, verbose::Bool=true)
 
 Remove old backup files, keeping only the most recent ones.
 Uses JPE_DB_BACKUPS environment variable for backup directory.
 """
-function cleanup_old_backups(keep_count::Int, verbose::Bool=true)
+function db_bk_clean(keep_count::Int, verbose::Bool=true)
     dest_dir = get(ENV, "JPE_DB_BACKUPS", nothing)
     if dest_dir === nothing
         error("JPE_DB_BACKUPS environment variable not set.")
@@ -145,7 +145,7 @@ function cleanup_old_backups(keep_count::Int, verbose::Bool=true)
 end
 
 """
-    get_most_recent_backup(file_type::String="duckdb")
+    db_bk_get_most_recent(file_type::String="duckdb")
 
 Get the path to the most recent backup file of the specified type.
 Uses JPE_DB_BACKUPS environment variable for backup directory.
@@ -156,7 +156,7 @@ Uses JPE_DB_BACKUPS environment variable for backup directory.
 # Returns
 - String path to the most recent backup file, or `nothing` if no backups found
 """
-function get_most_recent_backup(file_type::String="duckdb")
+function db_bk_get_most_recent(file_type::String="duckdb")
     backup_dir = get(ENV, "JPE_DB_BACKUPS", nothing)
     if backup_dir === nothing
         error("JPE_DB_BACKUPS environment variable not set.")
@@ -191,7 +191,7 @@ function get_most_recent_backup(file_type::String="duckdb")
 end
 
 """
-    get_all_recent_backups()
+    db_bk_get_all()
 
 Get paths to the most recent backup files for all types.
 Uses JPE_DB_BACKUPS environment variable for backup directory.
@@ -199,17 +199,17 @@ Uses JPE_DB_BACKUPS environment variable for backup directory.
 # Returns
 - NamedTuple with fields: `duckdb`, `arrivals`, `papers`
 """
-function get_all_recent_backups()
+function db_bk_get_all()
     return (
-        duckdb = get_most_recent_backup("duckdb"),
-        arrivals = get_most_recent_backup("arrivals.csv"), 
-        papers = get_most_recent_backup("papers.csv")
+        duckdb = db_bk_get_most_recent("duckdb"),
+        arrivals = db_bk_get_most_recent("arrivals.csv"), 
+        papers = db_bk_get_most_recent("papers.csv")
     )
 end
 
 function check_database_status()
     local_db = joinpath(get(ENV, "JPE_DB", ""), "jpe.duckdb")
-    backup_db = get_most_recent_backup("duckdb")
+    backup_db = db_bk_get_most_recent("duckdb")
     
     println("Database Status:")
     println("=" ^ 50)
@@ -217,8 +217,8 @@ function check_database_status()
     if !isfile(local_db)
         println("❌ Local database not found: $local_db")
     else
-        local_info = get_db_last_modified(local_db)
-        local_readable = get_db_last_modified_readable(local_db)
+        local_info = db_bk_last_modified(local_db)
+        local_readable = db_bk_last_modified_readable(local_db)
         println("📁 Local:  $local_readable")
     end
     
@@ -232,7 +232,7 @@ function check_database_status()
     
     # For comparison, use the comparison_timestamp
     if isfile(local_db) && backup_db !== nothing
-        local_info = get_db_last_modified(local_db)
+        local_info = db_bk_last_modified(local_db)
         local_time = local_info.comparison_timestamp
         backup_time = stat(backup_db).mtime
         
@@ -255,12 +255,12 @@ end
 
 
 """
-    get_db_last_modified(db_path::String)
+    db_bk_last_modified(db_path::String)
 
 Get the actual last data modification time by checking timestamps across all tables.
 Returns a NamedTuple with the most recent Date and DateTime found, plus a combined Unix timestamp.
 """
-function get_db_last_modified(db_path::String)
+function db_bk_last_modified(db_path::String)
     if !isfile(db_path)
         return nothing
     end
@@ -344,12 +344,12 @@ function get_db_last_modified(db_path::String)
 end
 
 """
-    get_db_last_modified_readable(db_path::String)
+    db_bk_last_modified_readable(db_path::String)
 
 Get a human-readable string showing the most recent data modification.
 """
-function get_db_last_modified_readable(db_path::String)
-    result = get_db_last_modified(db_path)
+function db_bk_last_modified_readable(db_path::String)
+    result = db_bk_last_modified(db_path)
     if result === nothing
         return "File not found"
     end
@@ -370,4 +370,18 @@ function get_db_last_modified_readable(db_path::String)
     end
     
     return join(parts, ", ")
+end
+
+function db_bk_fetch_latest()
+    mr = db_bk_get_most_recent()
+    println("overwriting local database file with : $mr")
+    println("y or n?")
+    response = readline()
+    if lowercase(strip(response)) == "y"
+        cp(mr,joinpath(ENV["JPE_DB"],"jpe.duckdb"),force = true)
+        @info "copied $mr to $(joinpath(ENV["JPE_DB"],"jpe.duckdb"))"
+        println()
+        check_database_status()
+    end
+
 end

@@ -93,10 +93,12 @@ function __init__()
     end
 
     check_database_status()
+    println()
     print("Would you like to fetch a database update? (y/n): ")
     response = readline()
     if lowercase(strip(response)) == "y"
-        fetch_database_update()
+        db_bk_fetch_latest()
+        db_bk_clean(50)
     end
     
     @info "Module loaded ok"

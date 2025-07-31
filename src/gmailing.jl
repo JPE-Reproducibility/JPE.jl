@@ -229,6 +229,9 @@ function gmail_rnr_body(first,paperID,title,url)
     <h3>Outline of Issues 📝</h3>
 
 
+    <i>All required changes in your README are indicated by {REQUIRED}.</i>
+    <br>
+
     <ol>
     <li>Item 1</li>
     <li>Item 2.</li>
