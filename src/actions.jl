@@ -120,7 +120,7 @@ function preprocess(paperID; which_round = nothing)
         "using JPEtools; JPEtools.precheck_package(\"$(joinpath(repoloc,"replication-package"))\")"
     ])
 
-    res = chomp(read(run(Cmd(cmd; dir = "/Users/floswald/git/JPEtools")),String))
+    res = chomp(read(run(Cmd(cmd; dir = ENV["JPE_TOOLS_JL"])),String))
 
     # * write the _variables.yml file for the report template
     open(joinpath(repoloc,"_variables.yml"), "w") do io
