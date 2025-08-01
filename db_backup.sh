@@ -9,7 +9,7 @@ DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 mkdir -p "$DEST"
 
 # Copy the current database file
-cp "$SOURCE/jpe.duckdb" "$DEST/backup_$DATE.duckdb"
+cp -v "$SOURCE/jpe.duckdb" "$DEST/backup_$DATE.duckdb"
 cp -v "$SOURCE/arrivals.csv" "$DEST/backup_${DATE}_arrivals.csv"
 cp -v "$SOURCE/papers.csv" "$DEST/backup_${DATE}_papers.csv"
 # cp "$SOURCE/reports.csv" "$DEST/backup_$DATE_reports.csv"
