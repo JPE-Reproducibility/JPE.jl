@@ -112,10 +112,6 @@ function __init__()
     end
 
     show_logo()
-    papers_statuses()
-    println()
-
-
 
     # check_database_status()
     println()
@@ -125,6 +121,9 @@ function __init__()
         db_bk_fetch_latest()
         db_bk_clean(50)
     end
+
+    papers_statuses()
+    println()
     
     @info "Module loaded ok"
 
