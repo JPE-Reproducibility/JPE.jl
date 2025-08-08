@@ -107,6 +107,9 @@ function preprocess(paperID; which_round = nothing)
     gh_clone_branch(r.gh_org_repo,"round$(round)", to = repoloc)
     
     # * copy round version from Dropbox to local repo into temp location
+       
+    # recompute file request full path for local machine
+    r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)  
     cp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), force = true)
 
     zips = read_and_unzip_directory(joinpath(repoloc,"replication-package"))
