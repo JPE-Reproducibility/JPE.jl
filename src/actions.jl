@@ -849,15 +849,24 @@ function write_report(paperID)
     elseif !isfile(template_path)
         @warn "Template file not found at $template_path"
     end    
-    # Open VSCode
-    run(`code $repo_path`)
-    
+   
     # Compute PDF path
     pdf_filename = "$(get_case_id(r.journal, r.paper_slug, r.round,fpath = false)).pdf"
     pdf_path = joinpath(repo_path, pdf_filename)
     println(pdf_path)
     println(report_pdf_path(r))
     @assert pdf_path == report_pdf_path(r)
+    
+   # Open VSCode
+   
+    println("open vscode to edit?")
+    yes_no_menu = RadioMenu(["No", "Yes"])  # Default is first option (No)
+    if request(yes_no_menu) == 2 
+        run(`code $repo_path`)
+    else
+        @info "you need to compile the report somehow! and save it as $(pdf_path)"
+    end
+    
     
     @info """
     Report preparation started:
