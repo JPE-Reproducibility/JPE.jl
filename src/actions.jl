@@ -80,7 +80,7 @@ function dispatch()
 end
 
 
-function preprocess(paperID; which_round = nothing)
+function preprocess(paperID; which_round = nothing, copy_package = true)
     
     # get row from "iterations"
     p = db_filter_paper(paperID)
@@ -110,7 +110,26 @@ function preprocess(paperID; which_round = nothing)
        
     # recompute file request full path for local machine
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)  
-    cp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), force = true)
+    if copy_package
+        @info "copying package to temp loc"
+        cp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), force = true)
+    else
+        @info "manual copy of large package"
+        println("done copying?")
+        println("copy from")
+        println(joinpath(r.file_request_path_full,"replication-package"))
+        println("to")
+        println(joinpath(repoloc,"replication-package"))
+
+        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
+        if request(yes_no_menu) == 1
+            println("continuing")
+        else
+            println("not continuing")
+            return 0
+        end
+
+    end
 
     zips = read_and_unzip_directory(joinpath(repoloc,"replication-package"))
 
@@ -155,7 +174,9 @@ end
 """
 Display replicators in a tabular view grouped by OS
 """
-function display_replicators(rs::DataFrame)
+function display_replicators()
+    rs_normalized = read_replicators()
+
     # Function to normalize OS names to just the main family
     function normalize_os(os_string)
         os_lower = lowercase(string(os_string))
@@ -171,7 +192,6 @@ function display_replicators(rs::DataFrame)
     end
     
     # Add normalized OS column
-    rs_normalized = copy(rs)
     rs_normalized.os_family = [normalize_os(os) for os in rs_normalized.os]
 
     rs_normalized.current_workload .= Int.(rs_normalized.current_workload)
@@ -253,8 +273,6 @@ function display_replicators(rs::DataFrame)
     else
         println("No replicators found.")
     end
-    
-    return rs  # Return the original dataframe
 end
 
 """
@@ -296,7 +314,7 @@ function select_replicators(paperID)
     rs = read_replicators()
     
     # Display replicators in a tabular view grouped by OS
-    display_replicators(rs)
+    display_replicators()
     
     # Create interactive menu for primary replicator selection
     println("\n📋 Select primary replicator for paper ID: $paperID")

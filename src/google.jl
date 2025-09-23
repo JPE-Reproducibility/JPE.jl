@@ -21,6 +21,13 @@ function gs4_arrivals()
     @rget d
     
 end
+function gs4_DAS()
+    R"""
+    d = googlesheets4::read_sheet($(gs_DAS_id()), sheet = 'new-arrivals' )
+    """
+    @rget d
+    
+end
 
 function gs4_reports()
     R"""
@@ -69,7 +76,7 @@ function available_replicators(; update = false)
     d = gs4_get_replicators()
     @chain d begin
         subset("can take +1 package" => ByRow(==("Yes")), skipmissing = true)
-        select(:email,"current_workload (Data Editor)")
+        select(:email,"current_workload")
     end
 end
 ar(; update = false) = available_replicators(; update = update)
@@ -102,9 +109,10 @@ function printwalkdir(path)
     end  
 end
 
-
+gs_replicator_billing() = "1ybqBJIY55FRqf7A-DvxhxLiFsDytJsDKb3GMCSMMbUs"
 gs_replicators_id() = "1QtmmBMEhq5BcoJqMy-FeVrbcsseI7rA_NEjXH94UtV0"
 gs_arrivals_id() = "1tmOuid7s7fMhj7oAG_YNHAjRd7bmr7YDM5QKLF6LXys"
+gs_DAS_id() = "1VE2t7Ia2UCWPpcIOAcqBqGH9Q8X1LHGFk7uUrcCqMbg"
 gs_arrivals_url() = "https://docs.google.com/spreadsheets/d/1VE2t7Ia2UCWPpcIOAcqBqGH9Q8X1LHGFk7uUrcCqMbg/edit"
 gs_jpe() = "1Pa-qShyqE57CdUXHlhHD95wIP9MFPJG9xmlzTVPeGzA"
 gs_reports_id() = "1R74dGMJ2UAfSSVCmjSQLo-qflGRXvNnDGD9ZCEebtTw"

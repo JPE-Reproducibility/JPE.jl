@@ -919,6 +919,185 @@ function db_delete_where(table::String, where_cols::Vector{String}, where_vals)
     @info "Deleted rows from $table where $(join(where_cols .* " = " .* string.(where_vals), " AND "))"
 end
 
+
+
+"""
+    db_delete_paper(id)
+
+Safely delete for a given paper from the database.
+This function creates backups before deletion, uses transactions for atomicity,
+and validates the database state after deletion.
+
+Returns a DataFrame with information about the deletion operation.
+"""
+function db_delete_test(id::String)
+    # Create a result DataFrame to track operations
+    results = DataFrame(
+        operation = String[],
+        target = String[],
+        status = String[],
+        details = String[]
+    )
+    
+    # Step 1: Create backups of affected tables
+    try
+        papers_df = db_df("papers")
+        push!(results, ("backup", "papers", "success", "$(nrow(papers_df)) rows backed up"))
+        db_write_backup("papers_pre_delete", papers_df)
+        
+        form_arrivals_df = db_df("form_arrivals")
+        push!(results, ("backup", "form_arrivals", "success", "$(nrow(form_arrivals_df)) rows backed up"))
+        db_write_backup("form_arrivals_pre_delete", form_arrivals_df)
+
+        iterations_df = db_df("iterations")
+        push!(results, ("backup", "iterations", "success", "$(nrow(iterations_df)) rows backed up"))
+        db_write_backup("iterations_pre_delete", iterations_df)
+        
+        reports_df = db_df("reports")
+        push!(results, ("backup", "reports", "success", "$(nrow(reports_df)) rows backed up"))
+        db_write_backup("reports_pre_delete", reports_df)
+    catch backup_err
+        push!(results, ("backup", "tables", "error", "Failed to create backups: $backup_err"))
+        return results  # Return early if backups fail
+    end
+    
+    # Step 2: Get test repos to delete
+    test_repos = DataFrame()
+    try
+        test_repos = db_get_columns("papers", ["github_url"], "paper_id", id)
+        push!(results, ("query", "test_repos", "success", "Found $(nrow(test_repos)) repos to delete"))
+    catch query_err
+        push!(results, ("query", "test_repos", "error", "Failed to query test repos: $query_err"))
+        # Continue even if this fails
+    end
+    
+    # Step 3: Delete GitHub repos
+    for r in eachrow(test_repos)
+        try
+            if !ismissing(r.github_url) && !isempty(r.github_url)
+                gh_delete_repo(r.github_url)
+                push!(results, ("delete", "github_repo", "success", "Deleted $(r.github_url)"))
+            end
+        catch gh_err
+            push!(results, ("delete", "github_repo", "error", "Failed to delete $(r.github_url): $gh_err"))
+            # Continue with other repos even if one fails
+        end
+    end
+    
+    # Step 4: Delete database entries using transactions
+    try
+        # Delete from form_arrivals
+        robust_db_operation() do con
+            # First count how many rows will be affected
+            count_query = "SELECT COUNT(*) as count FROM form_arrivals WHERE paper_id = ?"
+            stmt = DBInterface.prepare(con, count_query)
+            count_result = DataFrame(DBInterface.execute(stmt, ("[TEST]",)))
+            count = count_result.count[1]
+            
+            # Then delete
+            delete_query = "DELETE FROM form_arrivals WHERE paper_id = ?"
+            stmt = DBInterface.prepare(con, delete_query)
+            DBInterface.execute(stmt, (id,))
+            
+            push!(results, ("delete", "form_arrivals", "success", "Deleted $count rows"))
+        end
+    catch form_err
+        push!(results, ("delete", "form_arrivals", "error", "Failed to delete from form_arrivals: $form_err"))
+    end
+    
+    try
+        # Delete from papers
+        robust_db_operation() do con
+            # First count how many rows will be affected
+            count_query = "SELECT COUNT(*) as count FROM papers WHERE paper_id = ?"
+            stmt = DBInterface.prepare(con, count_query)
+            count_result = DataFrame(DBInterface.execute(stmt, (id,)))
+            count = count_result.count[1]
+            
+            # Then delete
+            delete_query = "DELETE FROM papers WHERE paper_id = ?"
+            stmt = DBInterface.prepare(con, delete_query)
+            DBInterface.execute(stmt, (id,))
+            
+            push!(results, ("delete", "papers", "success", "Deleted $count rows"))
+        end
+    catch papers_err
+        push!(results, ("delete", "papers", "error", "Failed to delete from papers: $papers_err"))
+    end
+    
+    try
+        # Delete from iterations
+        robust_db_operation() do con
+            # First count how many rows will be affected
+            count_query = "SELECT COUNT(*) as count FROM iterations WHERE paper_id = ?"
+            stmt = DBInterface.prepare(con, count_query)
+            count_result = DataFrame(DBInterface.execute(stmt, (id,)))
+            count = count_result.count[1]
+            
+            # Then delete
+            delete_query = "DELETE FROM iterations WHERE paper_id = ?"
+            stmt = DBInterface.prepare(con, delete_query)
+            DBInterface.execute(stmt, (id,))
+            
+            push!(results, ("delete", "iterations", "success", "Deleted $count rows"))
+        end
+    catch iterations_err
+        push!(results, ("delete", "iterations", "error", "Failed to delete from iterations: $iterations_err"))
+    end
+    
+    try
+        # Delete from reports
+        robust_db_operation() do con
+            # First count how many rows will be affected
+            count_query = "SELECT COUNT(*) as count FROM reports WHERE paper_id = ?"
+            stmt = DBInterface.prepare(con, count_query)
+            count_result = DataFrame(DBInterface.execute(stmt, (id,)))
+            count = count_result.count[1]
+            
+            # Then delete
+            delete_query = "DELETE FROM reports WHERE paper_id = ?"
+            stmt = DBInterface.prepare(con, delete_query)
+            DBInterface.execute(stmt, (id,))
+            
+            push!(results, ("delete", "reports", "success", "Deleted $count rows"))
+        end
+    catch reports_err
+        push!(results, ("delete", "reports", "error", "Failed to delete from reports: $reports_err"))
+    end
+    
+    # Step 5: Validate database state after deletion
+    try
+        # Check if tables still exist and are in a valid state
+        papers_exists = db_table_exists("papers")
+        form_exists = db_table_exists("form_arrivals")
+        iterations_exists = db_table_exists("iterations")
+        reports_exists = db_table_exists("reports")
+        
+        if papers_exists && form_exists && iterations_exists && reports_exists
+            push!(results, ("validate", "tables", "success", "Tables exist after deletion"))
+            
+            # Check if we can still query the tables
+            papers_count = nrow(db_df("papers"))
+            form_count = nrow(db_df("form_arrivals"))
+            iterations_count = nrow(db_df("iterations"))
+            reports_count = nrow(db_df("reports"))
+            push!(results, ("validate", "query", "success", 
+                "papers: $papers_count rows, form_arrivals: $form_count rows, " *
+                "iterations: $iterations_count rows, reports: $reports_count rows"))
+        else
+            push!(results, ("validate", "tables", "error", 
+                "Tables missing after deletion: papers=$papers_exists, form_arrivals=$form_exists, " *
+                "iterations=$iterations_exists, reports=$reports_exists"))
+        end
+    catch validate_err
+        push!(results, ("validate", "database", "error", "Validation failed: $validate_err"))
+    end
+    
+    return results
+end
+
+
+
 """
     db_delete_test()
 

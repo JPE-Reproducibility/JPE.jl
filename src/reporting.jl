@@ -548,9 +548,6 @@ function calculate_replicator_workload(iterations_df, replicators_df)
         ))
     end
     
-    # Sort by workload (descending)
-    sort!(workload_df, :current_workload, rev=true)
-    
     return workload_df
 end
 
@@ -634,6 +631,74 @@ function status_report()
         groupby(:status)
         combine(:paper_slug)
     end
+end
+
+
+"get hours worked by replicator"
+function replicator_hours_worked()
+    d = 
+    x1 = @chain db_df("iterations") begin
+        # get all completed iterations
+        subset(:date_completed_repl => ByRow(x -> !ismissing(x) ))
+        # make a case id
+        transform([:journal,:paper_slug, :round] => ByRow((x,y,z) -> get_case_id(x,y,z, fpath = false)) => :case_id)
+        transform([:date_assigned_repl, :date_completed_repl] => ByRow((x,y) -> y - x) => :days_taken )
+        # take care of 2-replicator cases
+        select(:date_completed_repl, :days_taken, :replicator1, :replicator2, :hours1, :hours2, :case_id, :comments)
+    end
+    x2 = @chain x1 begin
+        dropmissing([:replicator2, :hours2])
+        select(:date_completed_repl, :days_taken, :case_id, :comments,:hours2 => :hours, :replicator2 => :replicator)
+    end
+    select!(x1, :date_completed_repl, :days_taken, :replicator1 => :replicator, :hours1 => :hours, :case_id, :comments)
+    
+    append!(x1,x2)
+end
+
+"gets list of hours worked and multiplies with hourly rate"
+function replicator_billing(; rate = 25.0, write_gs = false)
+
+    h = replicator_hours_worked()
+
+    # for test case, pay max 2 hours
+    h.hours .= ifelse.((.!ismissing.(h.comments)) .& (h.comments .== "[TEST]"), min.(h.hours,2.0), h.hours)
+
+    disallowmissing!(h,:date_completed_repl)
+    transform!(h, :date_completed_repl => (x -> string.(year.(x),"-Q",quarterofyear.(x))) => :quarter)
+
+    h = @chain h begin
+        groupby([:replicator,:quarter])
+        combine(:case_id => (x -> [[x...]]) => :case_id, :hours => sum => :hours)
+        subset(:replicator => ByRow(x -> !contains(x, "florian.oswald")))
+    end
+
+    h.pay_EUR = h.hours .* rate
+
+    x = select(h, :replicator, :quarter, :case_id => ByRow(x -> length(x)) => :num_jobs, :hours, :pay_EUR)
+
+
+    if write_gs
+        R"""
+        id = $(gs_replicator_billing())
+        df = $(x)
+        googlesheets4::write_sheet(
+            data = df,
+            ss = id,
+            sheet = "billing"
+        )
+        """
+
+    end
+    println()
+    println("budget report:")
+    b = combine(
+        groupby(x, :quarter),
+        :hours => sum => :hours, :num_jobs => sum => :num_jobs, :pay_EUR => sum => :cost_EUR
+    )
+
+    pretty_table(b)
+
+    h
 end
 
 
@@ -763,7 +828,5 @@ function replicator_history(; email = nothing)
     if !isnothing(email)
         subset!(r, :replicator => ByRow(==(email)))
     end
-
     r
-
 end
