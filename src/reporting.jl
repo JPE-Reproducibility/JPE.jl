@@ -24,8 +24,15 @@ Generate a global report of the JPE database, including:
 """
 function global_report(; save_csv=false, csv_path=nothing)
     # Query database for papers
-    papers_df = db_df("papers")
-    iterations_df = db_df("iterations")
+    papers = db_df("papers") 
+    testcases = @chain papers begin
+        dropmissing(:comments)
+        subset(:comments => ByRow(==("[TEST]")))
+    end
+    papers_df = subset(papers, :paper_id => ByRow(∉(testcases.paper_id)))
+    iterations_df = @chain db_df("iterations") begin
+        subset(:paper_id => ByRow(∉(testcases.paper_id)))
+    end
     
     # 1. Count of unique papers
     unique_papers = nrow(papers_df)
