@@ -249,25 +249,31 @@ function google_arrivals()
         r.github_url = "https://github.com/" * r.gh_org_repo
 
         # send email to authors
-        gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author), email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author))
+        println("notify author and JO for $(r.paper_slug)?")
+        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
+        if request(yes_no_menu) == 1
+            gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author), email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author))
 
-        r.date_with_authors = Dates.today()
+            r.date_with_authors = Dates.today()
 
-        # send email to JO
-        gmail_file_request(r.surname_of_author, r.paper_id, r.title, r.file_request_url_paper, JO_email(), JO = true)
-        
-        # Update status to "with_author" (was "new_arrival")
-        r.status = "with_author"
-        
-        # Add row to papers table using db_append_new_row with the original DataFrame for type information
-        db_append_new_row("papers", "paper_id", r)
-        
-        # Add row to iterations table (using composite key)
-        # We need to exclude timestamp from iterations table
-        iter_row = select(DataFrame([r]), Not([:timestamp,:status]))[1, :]
-        db_append_new_row("iterations", ["paper_id", "round"], iter_row)
-        
-        db_update_cell("form_arrivals", "paper_id = $(r.paper_id)", "processed", true)
+            # send email to JO
+            gmail_file_request(r.surname_of_author, r.paper_id, r.title, r.file_request_url_paper, JO_email(), JO = true)
+            
+            # Update status to "with_author" (was "new_arrival")
+            r.status = "with_author"
+            
+            # Add row to papers table using db_append_new_row with the original DataFrame for type information
+            db_append_new_row("papers", "paper_id", r)
+            
+            # Add row to iterations table (using composite key)
+            # We need to exclude timestamp from iterations table
+            iter_row = select(DataFrame([r]), Not([:timestamp,:status]))[1, :]
+            db_append_new_row("iterations", ["paper_id", "round"], iter_row)
+            
+            db_update_cell("form_arrivals", "paper_id = $(r.paper_id)", "processed", true)
+        else
+            println("paper not processed")
+        end
     end
 
     # Final security backup after all processing
@@ -414,6 +420,8 @@ function read_google_arrivals( )
         "paper_slug",
         "processed"
     ]
+
+    select!(df,n)
 
     # return df
     # save in db
