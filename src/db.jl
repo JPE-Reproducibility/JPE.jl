@@ -930,7 +930,7 @@ and validates the database state after deletion.
 
 Returns a DataFrame with information about the deletion operation.
 """
-function db_delete_test(id::String)
+function db_delete_paper(id::String)
     # Create a result DataFrame to track operations
     results = DataFrame(
         operation = String[],

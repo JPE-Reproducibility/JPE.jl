@@ -370,7 +370,7 @@ by default appends new rows to the local database
 function read_google_arrivals( )
 
     gs4_auth()
-    gs_arrivals = gs4_arrivals()
+    gs_arrivals = gs4_DAS()
 
     # create a clean df from gs_arrivals
     df = gs_arrivals |> polish_names |> DataFrame
@@ -378,9 +378,15 @@ function read_google_arrivals( )
     # rename
     DataFrames.rename!(df, 
         "first_name(s)_of_author" => "firstname_of_author",
+        "please_indicate_the_journal" => "journal",
         "email_of_second_author_(if_applicable)" => "email_of_second_author",
-        "does_the_data_availatilibty_statement_form_mention_any_access_restrictions_for_used_data" => "is_confidential",
-        "can_the_confidential_data_be_shared_with_the_data_editor_(if_applicable)" => "share_confidential"
+        "manuscript_title" => "title",
+        "manuscript_id_in_editorial_manager" => "paper_id",
+        "does_this_submission_contain_numerical_work_of_any_kind" => "pure_theory",
+        "is_any_of_the_data_used_in_this_manuscript_subject_to_access_restrictions" => "is_confidential",
+        "can_the_confidential_data_temporarily_be_shared_with_the_data_editor_for_replication_checks" => "share_confidential",
+        "does_the_package_contain_a_main_driver_script_to_create_all_tables_figures_and_in_text_numbers" => "has_driver_script",
+        "i_agree_that_after_successful_completion_of_reproducility_checks_my_package_will_be_deposited_on_the_jpe_dataverse" => "agree_dataverse"
     )
     if nrow(df) > 0
         df.paper_id .= google_paperid(df,"paper_id")
@@ -388,6 +394,26 @@ function read_google_arrivals( )
         df.paper_slug = get_paper_slug.(df.surname_of_author,df.paper_id)
         df.processed .= false
     end
+
+    subset!(df, :pure_theory => ByRow(!=("No - Pure theory paper")))
+    
+    # needs to look like this
+    n = [
+        "timestamp",
+        "journal",
+        "paper_id",
+        "title",
+        "firstname_of_author",
+        "surname_of_author",
+        "email_of_author",
+        "email_of_second_author",
+        "handling_editor",
+        "is_confidential",
+        "share_confidential",
+        "comments",
+        "paper_slug",
+        "processed"
+    ]
 
     # return df
     # save in db
