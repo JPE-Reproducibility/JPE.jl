@@ -772,6 +772,7 @@ function papers_statuses()
         push!(x, (r.paper_id, calculate_days_in_status(r)))
     end
     df = @chain p begin
+        subset(:comments => ByRow(x -> (ismissing(x) | (x !=("[TEST]")))))
         groupby(:status)
         combine(:paper_slug,:paper_id, :round)
         select(:status,:paper_slug,:round, :paper_id)
@@ -782,16 +783,19 @@ function papers_statuses()
     # days = 
     # Define highlighters - no Crayons needed!
     highlighters = (
-        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && data[i, 4] <= 3, 
+        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && data[i, 4] <= 3 && data[i,1] != "acceptable_package", 
                     crayon = Crayon(background = :light_green)),
-        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && 3 < data[i, 4] <= 5, 
+        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && 3 < data[i, 4] <= 5 && data[i,1] != "acceptable_package", 
                     crayon = Crayon(background = :green)),
-        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && 5 < data[i, 4] <= 10, 
+        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && 5 < data[i, 4] <= 10 && data[i,1] != "acceptable_package", 
                     crayon = Crayon(background = :light_yellow)),                    
-        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && data[i, 4] > 10, 
+        Highlighter(f = (data, i, j) -> !ismissing(data[i, 4]) && data[i, 4] > 10 && data[i,1] != "acceptable_package", 
                     crayon = Crayon(background = :light_red)),
         Highlighter(f = (data, i, j) -> ismissing(data[i, 4]), 
-                    crayon = Crayon(background = :white))  # using :white instead of light_gray
+                    crayon = Crayon(background = :white)),  # using :white instead of light_gray
+        Highlighter(f = (data, i, j) -> data[i, 1] == "acceptable_package", 
+                    crayon = Crayon(background = :default))  # using :white instead of light_gray
+
     )
     pretty_table(df, highlighters = highlighters)
 
