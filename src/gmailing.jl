@@ -144,6 +144,46 @@ end
 
 
 
+function gmail_send_invoice(first,email,invoicetable,capped,rate,invoice; send = true)
+    subject = "Your JPE Invoice details"
+
+    # Custom styled HTML table
+    table_html = sprint((io, df) -> show(io, MIME("text/html"), df, eltypes=false,max_column_width = "200px", show_row_number = false, summary = false,linebreaks = true,), invoicetable)
+    
+    to = email
+    body = """
+        Hi $(first)!
+        <br>
+        <br>
+        Here are your invoicing details
+        <br>
+        <br>
+        $(table_html)
+        <br>
+        Please let me know if there is anything wrong with that. Notice that I capped `[TEST]` cases at max $(capped) hours per iteration. This means you can bill $(sum(invoicetable.hours)) hours during this quarter at a rate of $(rate) Euros per hour.
+        <br>    
+        <br>
+        You should now fill in your invoice number: $(invoice) and the amount in Euros: $(sum(invoicetable.hours) * rate).   
+        <br>    
+        <br>
+        Thanks so much for your help with this project!
+        <br>
+        <br>
+        Florian
+        """
+    body = body * signature()
+    if send
+        gmail_send(
+            to,
+            subject,
+            body,
+            []
+        )
+    else
+        println(body)
+    end
+end
+
 
 case_id(journal,author,ms,round) = string(journal,"-",author,"-",ms,"-R",round)
 

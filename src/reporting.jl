@@ -141,6 +141,7 @@ function paper_report(paperID; save_csv=false, csv_path=nothing)
     
     # Create timeline DataFrame
     timeline_df = create_timeline(iterations_df)
+    # return timeline_df
     
     # Print the reports with PrettyTables
     println("\n=== Paper Report: $(paper.paper_id) ===\n")
@@ -155,6 +156,23 @@ function paper_report(paperID; save_csv=false, csv_path=nothing)
         pretty_table(timeline_df; 
                     header=["Date", "Event", "Details"], 
                     alignment=[:l, :l, :l])
+
+        println()
+        if (paper.status == "acceptable_package") | (paper.status == "published")
+            println("Total Time initial contact until acceptance:")
+
+            accept_date = @chain timeline_df begin
+                subset(:Details => ByRow(==("Decision: accept")))
+                _.Date
+            end
+            tottime = accept_date - paper.first_arrival_date
+            println(tottime[1])
+        else
+            println("Total Time taken until today:")
+            println(Dates.today() - paper.first_arrival_date[1] )
+
+        end
+
     else
         println("No timeline events found for this paper.")
     end
@@ -663,26 +681,60 @@ function replicator_hours_worked()
 end
 
 "gets list of hours worked and multiplies with hourly rate"
-function replicator_billing(; rate = 25.0, write_gs = false)
+function replicator_billing(; test_max_hours = 1.5, rate = 25.0, write_gs = false)
 
     h = replicator_hours_worked()
 
     # for test case, pay max 2 hours
-    h.hours .= ifelse.((.!ismissing.(h.comments)) .& (h.comments .== "[TEST]"), min.(h.hours,2.0), h.hours)
+    h.hours .= ifelse.((.!ismissing.(h.comments)) .& (h.comments .== "[TEST]"), min.(h.hours,test_max_hours), h.hours)
 
     disallowmissing!(h,:date_completed_repl)
     transform!(h, :date_completed_repl => (x -> string.(year.(x),"-Q",quarterofyear.(x))) => :quarter)
 
-    h = @chain h begin
+    # aggregate by replicator and quarter
+    h_summary = @chain h begin
         groupby([:replicator,:quarter])
         combine(:case_id => (x -> [[x...]]) => :case_id, :hours => sum => :hours)
         subset(:replicator => ByRow(x -> !contains(x, "florian.oswald")))
     end
 
-    h.pay_EUR = h.hours .* rate
+    h_summary.pay_EUR = h_summary.hours .* rate
 
-    x = select(h, :replicator, :quarter, :case_id => ByRow(x -> length(x)) => :num_jobs, :hours, :pay_EUR)
+    # sending emails
+    replicators_df = @chain read_replicators() begin
+        select(:email,:name,:invoice)
+    end
 
+    current = string(year(today()),"-Q",quarterofyear(today()))
+    println("sending billing information for " * current)
+    println("is that correct? if not enter different quarter")
+    yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option (Yes)
+    if request(yes_no_menu) == 1 
+        # nothing
+    else
+        choice = Prompt("enter required quarter") |> ask
+        current = choice
+        println("sending emails about $choice")
+    end
+
+    h_repl = @chain h begin
+        subset(:quarter => ByRow(==(current)))
+        groupby(:replicator)
+    end
+    for g in h_repl
+        # update wrong email addresses
+        search_email = if g.replicator[1] == "huiyann@ucsb.edu"
+            "foohuiyann@gmail.com"
+        else
+            g.replicator[1]
+        end
+        r = subset(replicators_df, :email => ByRow(==(search_email)))
+        # println("trying $r")
+        # println(g)
+        gmail_send_invoice(r.name[1],r.email[1],select(g,Not(:replicator)), test_max_hours,rate,r.invoice[1],send = true)
+    end
+
+    x = select(h_summary, :replicator, :quarter, :case_id => ByRow(x -> length(x)) => :num_jobs, :hours, :pay_EUR)
 
     if write_gs
         R"""
