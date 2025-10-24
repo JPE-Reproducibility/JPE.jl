@@ -40,15 +40,7 @@ function read_and_unzip_directory(dir_path::String)
         
         # Remove any .git directories from extracted contents
         if isdir(extract_dir)
-            for (root, dirs, files) in walkdir(extract_dir)
-                if ".git" in dirs
-                    git_path = joinpath(root, ".git")
-                    @info "Removing git repository: $git_path"
-                    rm(git_path, recursive=true, force=true)
-                    # Remove from dirs to prevent walkdir from trying to enter it
-                    filter!(d -> d != ".git", dirs)
-                end
-            end
+            rm_git(extract_dir)
         end
     end
 
@@ -58,4 +50,18 @@ function read_and_unzip_directory(dir_path::String)
     
     # Return all files in directory after unzipping
     return filter(isfile, readdir(dir_path, join=true))
+end
+
+function rm_git(extract_dir)
+    for (root, dirs, files) in walkdir(extract_dir)
+        if ".git" in dirs
+            git_path = joinpath(root, ".git")
+            @info "Removing git repository: $git_path"
+            rm(git_path, recursive=true, force=true)
+            # Remove from dirs to prevent walkdir from trying to enter it
+            filter!(d -> d != ".git", dirs)
+            # stop immediately after deleting the .git
+            return 0
+        end
+    end
 end

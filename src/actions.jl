@@ -112,7 +112,7 @@ function preprocess(paperID; which_round = nothing, copy_package = true)
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)  
     if copy_package
         @info "copying package to temp loc"
-        cp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), force = true)
+        mycp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), recursive = true, force = true)
     else
         @info "manual copy of large package"
         println("done copying?")
@@ -170,6 +170,15 @@ function preprocess(paperID; which_round = nothing, copy_package = true)
     # * Delete local repo
 end
 
+
+function mycp(src::AbstractString, dst::AbstractString; recursive::Bool = false, force::Bool=false)
+    cmd = Sys.iswindows() ? `cmd /c copy` : `cp`
+    force_option = Sys.iswindows() ? (force ? `/y` : `/-y`) : (force ? `-f` : `-n`)
+    recursive_option = Sys.iswindows() ? (recursive ? `/r` : ``) : (recursive ? `-r` : ``)
+    cmd = `$cmd $force_option`
+    cmd = `$cmd $recursive_option`
+    run(`$cmd $src $dst`)
+end
 
 """
 Display replicators in a tabular view grouped by OS
