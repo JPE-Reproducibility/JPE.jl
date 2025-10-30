@@ -42,6 +42,12 @@ function de_process_waiting_reports()
         end
     end
 
+    @info "updating workloads"
+    replicator_workload_report(update_gsheet=true)
+
+    @info "updating replicator assignments on gsheet"
+    replicator_assignments( )
+
     @info "creating backup"
     db_bk_create()
 
