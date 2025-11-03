@@ -1117,3 +1117,20 @@ function monitor_file_requests()
 
     return Dict(:waiting => waiting, :arrived => arrived, :remindJO => df_reminders) 
 end
+
+
+function paper_submitted_manually(id,round)
+    update_paper_status(id, "with_author", "author_back_de") do con
+        # Update iterations table with arrival date
+        # submit_time = dbox_fr_submit_time(dbox_token, iter.file_request_path)
+        submit_time = today()
+        if !isnothing(submit_time)
+            DBInterface.execute(con, """
+            UPDATE iterations
+            SET date_arrived_from_authors = ?
+            WHERE paper_id = ? AND round = ?
+            """, (Date(submit_time), id, round))
+            @info "File request arrived! ✅"
+        end
+    end
+end
