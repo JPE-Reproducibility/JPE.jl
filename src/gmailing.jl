@@ -314,6 +314,18 @@ function gmail_rnr_body(first,paperID,title,url)
     string(m1,signature())
 end
 
+function gmail_no_file_request(name,paperID,title,url,email1;email2 = nothing)
+    
+    to = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
+    to = [to...,JO_email()]
+    body = gmail_no_file_request_body(name,paperID,title,url)
+    gmail_send(
+        to,
+        "JPE paper $paperID is Pure Theory: No package needed",
+        body,
+        []
+    )
+end
 
 function gmail_file_request(name,paperID,title,url,email1;email2 = nothing, JO = false)
     if JO
@@ -372,6 +384,34 @@ function gmail_file_request_JO_body(authorlast,paperID,title,url)
     <br>
     <br>
     Thanks!
+    <br>
+    <br>
+
+    Best wishes,<br>
+    Florian
+    """
+
+    string(m1,signature())
+end
+
+
+
+function gmail_no_file_request_body(first,paperID,title,url)
+
+    m1 = """
+    Dear $first,
+    Dear Journal Office,
+    <br>
+    <br>
+    I am the Data Editor of the JPE. I am writing because you have indicated that your paper titled \"$title\", with manuscript ID $paperID, is a pure theory contribution on our Data and Code Availability Statement form. 
+    
+    I have verified this and agree with you. Therefore your paper does not need any replication package, hence, we will not perform any reproducibility checks. Please let me know if you think this is a mistake.
+    <br>
+    <br>
+    For our Journal Office this means: paper titled \"$title\", with manuscript ID $paperID is good to go.
+
+
+    I'm looking forward to receiving your replication package. 
     <br>
     <br>
 

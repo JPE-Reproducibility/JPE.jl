@@ -661,6 +661,9 @@ function collect_reports(;verbose = false)
             
             println("Completed processing report for paper $(r.paper_id), round $(r.round)")
             println("---------------------------------------------------------")
+
+            replicator_workload_report(   update_gsheet = true  )
+            replicator_assignments( )
         end
         
         return to_process

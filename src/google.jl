@@ -401,6 +401,31 @@ function read_google_arrivals( )
         df.processed .= false
     end
 
+    new_rows = robust_db_operation() do con
+        existing = DataFrame(DBInterface.execute(con, "SELECT paper_id FROM form_arrivals"))
+                    
+        # Find new rows using a more robust method
+        new_rows = antijoin(df_copy, existing; on=row_hash_var, matchmissing=:notequal)
+    end
+    @info "we have $(nrow(new_rows)) new rows to import"
+    
+    for r in eachrow(new_rows)
+        if r.pure_theors == "No - Pure theory paper"
+            println("paper $(r.paper_id) claims pure theory. accept or not?")
+            yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
+            if request(yes_no_menu) == 1
+                println("send email to JO")
+                gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author), email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author))
+
+                r.date_with_authors = Dates.today()
+
+                # send email to JO
+                gmail_file_request(r.surname_of_author, r.paper_id, r.title, r.file_request_url_paper, JO_email(), JO = true)
+            end
+        end
+    end
+
+    # throw out theory papers
     subset!(df, :pure_theory => ByRow(!=("No - Pure theory paper")))
     
     # needs to look like this
