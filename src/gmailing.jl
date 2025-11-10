@@ -225,13 +225,16 @@ function gmail_g2g_body(first,paperID,title,data_statement)
     Unless the files on dataverse are <i>exactly identical</i> to ours, this check will fail.
     Please remove the letter to the data editor before you submit - and do <b>not</b> include any confidential data.
     <br>
+    <br>
 
-    🚨 Also, after you have successfully created your dataverse deposit following instructions above, you are given a unique Digital Object Identifier (DOI) for it. You must add this DOI to your paper, together with a <i>data availability statement</i>. Please add separate section at the end of your manuscript, just before the references, like this:
+    🚨 Equally important, after you have successfully created your dataverse deposit following instructions above, you are given a unique Digital Object Identifier (DOI) for it. You must add this DOI to your paper, together with the below <i>data availability statement</i>. Please add a separate section at the end of your manuscript, just before the references, like this:
     <br>
     <blockquote>
+    <i>
     <h2>Data and Code Availability</h2>
-    Code and Data for this research are available at https://doi.org/[INSERT YOUR DOI HERE]. 
+    Data and Code for this research are available at https://doi.org/[INSERT YOUR DOI HERE]. 
     $data_short
+    </i>
     </blockquote>
 
     <br>
