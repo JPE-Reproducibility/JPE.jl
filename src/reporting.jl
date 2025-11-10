@@ -893,3 +893,54 @@ function replicator_history(; email = nothing)
     end
     r
 end
+
+function report_latest_iteration(paperID; round = nothing)
+
+    x = if isnothing(round)
+        db_latest_iteration(paperID)
+    else
+        db_filter_iteration(paperID,round)
+    end
+
+    select!(x,
+        "paper_id","round","repl_comments","is_success","is_confidential","is_confidential_shared",
+        "is_HPC","is_remote","hours1","hours2","software",
+        "data_statement")
+
+    disp = DataFrame(
+        Column = names(x),
+        Value = vec(Matrix(x))
+    )
+
+    disp.Value = wrap_text.(disp.Value)
+    
+    pretty_table(
+        disp,
+        linebreaks = true,
+        alignment = [:r, :l] 
+    )
+end
+
+function wrap_text(text, width=60)
+    str = string(text)
+    lines = String[]
+    
+    while length(str) > width
+        # Try to break at a space first
+        break_pos = findlast(' ', str[1:width])
+        
+        if break_pos !== nothing
+            # Break at space (no hyphen needed)
+            push!(lines, str[1:break_pos-1])
+            str = lstrip(str[break_pos+1:end])
+        else
+            # No space found, break the word and add hyphen
+            push!(lines, str[1:width] * "-")
+            str = str[width+1:end]
+        end
+    end
+    
+    push!(lines, str)
+    return join(lines, "\n")
+end
+

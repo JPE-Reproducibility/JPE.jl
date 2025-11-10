@@ -15,6 +15,8 @@ function de_process_waiting_reports()
         println("process $(r.paper_slug)?")
         yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option (Yes)
         if request(yes_no_menu) == 1 
+            # print summary of latest iteration to screen
+            report_latest_iteration(r.paper_id)
             # pull report
             write_report(r.paper_id)
             println()
@@ -647,6 +649,10 @@ function collect_reports(;verbose = false)
                         SET status = ?
                         WHERE paper_id = ?
                         """, ("replicator_back_de", r.paper_id))
+
+                        # update paper metadata from iterations
+                        db_update_paper_iterations_info(con, r.paper_id)
+
                     end
                     
                     if verbose
@@ -669,79 +675,6 @@ function collect_reports(;verbose = false)
         return nothing
     end
 end
-
-
-# function collect_reports()
-#     # First, read any new reports from the Google form
-#     # read_google_reports(; append = true)
-    
-#     # Make a backup of iterations
-#     db_write_backup("iterations", db_df("iterations"))
-    
-#     to_process = reports_to_process()
-    
-#     if nrow(to_process) > 0
-#         @info "Found $(nrow(to_process)) reports to process"
-        
-#         # Process each report individually with proper error handling
-#         for r in eachrow(to_process)
-#             try
-#                 # Update iterations table with report data
-#                 update_paper_status(r.paper_id, "with_replicator", "replicator_back_de") do con
-#                     # robust_db_operation() do con
-#                     DBInterface.execute(con, """
-#                         UPDATE iterations
-#                         SET 
-#                             replicator1 = ?,
-#                             replicator2 = ?,
-#                             hours1 = ?,
-#                             hours2 = ?,
-#                             is_success = ?,
-#                             software = ?,
-#                             is_confidential = ?,
-#                             is_confidential_shared = ?,
-#                             is_remote = ?,
-#                             is_HPC = ?,
-#                             runtime_code_hours = ?,
-#                             data_statement = ?,
-#                             repl_comments = ?,
-#                             date_completed_repl = ?
-#                         WHERE 
-#                             paper_id = ? AND
-#                             round = ?
-#                         """, (
-#                         r.email_of_replicator_1,
-#                         r.email_of_replicator_2,
-#                         r.hours_replicator_1,
-#                         r.hours_replicator_2,
-#                         r.is_success,
-#                         r.software_used_in_package,
-#                         r.is_confidential,
-#                         r.shared_confidential,
-#                         r.is_remote,
-#                         r.is_HPC,
-#                         r.running_time_of_code,
-#                         r.data_statement,
-#                         r.comments,
-#                         Date(r.timestamp),
-#                         r.paper_id,
-#                         r.round
-#                     ))
-#                 end
-                
-#                 @info "Successfully processed report for paper $(r.paper_id), round $(r.round)"
-#             catch e
-#                 @warn "Error processing report for paper $(r.paper_id), round $(r.round): $e"
-#             end
-#         end
-        
-#         return to_process
-#     else
-#         @info "No reports need processing"
-#         return nothing
-#     end
-
-# end
 
 """
     process_editor_decision(paperID, decision)
@@ -780,7 +713,7 @@ function process_editor_decision(paperID, decision)
             """, (today(), paperID, r.round))
             
             # Send acceptance email to author
-            gmail_g2g(r.firstname_of_author, r.paper_id, r.title,r.email_of_author, r.paper_slug, email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author)
+            gmail_g2g(r.firstname_of_author, r.paper_id, r.title,r.email_of_author, r.paper_slug, r.data_statement,email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author)
             
             return r
         end

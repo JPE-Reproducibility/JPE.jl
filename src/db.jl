@@ -1782,3 +1782,54 @@ function db_name(name::AbstractString)
     select(d, :paper_id, :surname_of_author, :round, :status)
 end
 
+
+"""
+for a paper which is being accepted, update the metadata from
+    iterations in main paper table
+"""
+function db_update_paper_iterations_info(con,paperid)
+    DBInterface.execute(con ,"""
+    UPDATE papers
+    SET 
+        data_statement = t2_latest.data_statement,
+        software       = t2_latest.software,
+        is_remote      = t2_latest.is_remote,
+        is_HPC         = t2_latest.is_HPC,
+        is_confidential         = t2_latest.is_confidential,
+        share_confidential         = t2_latest.share_confidential,
+    FROM (
+        SELECT 
+            paper_id,
+            data_statement,
+            software      ,
+            is_remote     ,
+            is_HPC        ,
+            is_confidential,
+            share_confidential,
+            ROW_NUMBER() OVER (PARTITION BY paper_id ORDER BY round DESC) as rn
+        FROM iterations
+        WHERE paper_id = ?
+    ) t2_latest
+    WHERE 
+        papers.paper_id = t2_latest.paper_id
+        AND t2_latest.rn = 1
+    """, (paperid,))
+end
+
+
+function db_latest_iteration(paperID)
+    robust_db_operation() do con
+        DBInterface.execute(con ,"""
+        WITH latest_t2 AS (
+            SELECT 
+                *
+            FROM iterations
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY paper_id ORDER BY round DESC) = 1
+        )
+        SELECT * FROM latest_t2
+        WHERE 
+            paper_id = ?
+        """, (paperID,)) |> DataFrame
+    end
+
+end

@@ -187,11 +187,11 @@ end
 
 case_id(journal,author,ms,round) = string(journal,"-",author,"-",ms,"-R",round)
 
-function gmail_g2g(first,paperID,title,email1,slug;email2 = nothing)
+function gmail_g2g(first,paperID,title,email1,slug, data_statement ;email2 = nothing,)
 
     to_ = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
     to = [to_...,  "jpe@press.uchicago.edu"]
-    body = gmail_g2g_body(first,paperID,title)
+    body = gmail_g2g_body(first,paperID,title,data_statement)
     gmail_send(
         to,
         "Reproducibility Checks for $(slug): Done.",
@@ -200,7 +200,11 @@ function gmail_g2g(first,paperID,title,email1,slug;email2 = nothing)
     )
 end
 
-function gmail_g2g_body(first,paperID,title)
+function gmail_g2g_body(first,paperID,title,data_statement)
+
+    data_short = lstrip(
+        replace(data_statement, r"\([^)]*\)" => "") # [^)]* matches any character except ), zero or more times (this is the content inside brackets)
+    )
 
     m1 = """
     Dear $first,
@@ -220,6 +224,16 @@ function gmail_g2g_body(first,paperID,title)
     🚨 It is of great importance that you do not modify the files in your submitted package anymore. We will check the final version of the package you sent us against what you will publish on dataverse in a very strict (and automated) fashion.
     Unless the files on dataverse are <i>exactly identical</i> to ours, this check will fail.
     Please remove the letter to the data editor before you submit - and do <b>not</b> include any confidential data.
+    <br>
+
+    🚨 Also, after you have successfully created your dataverse deposit following instructions above, you are given a unique Digital Object Identifier (DOI) for it. You must add this DOI to your paper, together with a <i>data availability statement</i>. Please add separate section at the end of your manuscript, just before the references, like this:
+    <br>
+    <blockquote>
+    <h2>Data and Code Availability</h2>
+    Code and Data for this research are available at https://doi.org/[INSERT YOUR DOI HERE]. 
+    $data_short
+    </blockquote>
+
     <br>
 
     After these steps are completed, your files will be sent back to your editor for final acceptance.

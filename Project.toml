@@ -1,7 +1,7 @@
 name = "JPE"
 uuid = "91eb96a3-1e89-498f-bca9-95862dab51bb"
-authors = ["Florian Oswald <florian.oswald@gmail.com> and contributors"]
 version = "1.0.0-DEV"
+authors = ["Florian Oswald <florian.oswald@gmail.com> and contributors"]
 
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
