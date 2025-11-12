@@ -698,22 +698,27 @@ function process_editor_decision(paperID, decision)
     r = NamedTuple(paper[1, :])
     
     # Validate current status
-    if r.status != "replicator_back_de"
-        error("Paper must be in 'replicator_back_de' status to process a decision")
+    if !any(occursin.(r.status, ["replicator_back_de","author_back_de"]))
+        error("Paper must be in either 'replicator_back_de' or 'author_back_de' status to process a decision")
     end
+    
     
     # Process based on decision
     if decision == "accept"
-        update_paper_status(paperID, "replicator_back_de", "acceptable_package") do con
+        update_paper_status(paperID, r.status, "acceptable_package") do con
             # Update iterations table
             DBInterface.execute(con, """
             UPDATE iterations
             SET date_decision_de = ?, decision_de = 'accept'
             WHERE paper_id = ? AND round = ?
             """, (today(), paperID, r.round))
+
+            if ismissing(r.data_statement) && r.round > 1
+                db_update_paper_iterations_info(con, r.paper_id,r.round-1)
+            end
             
             # Send acceptance email to author
-            gmail_g2g(r.firstname_of_author, r.paper_id, r.title,r.email_of_author, r.paper_slug, r.data_statement,email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author)
+            gmail_g2g(r.firstname_of_author, r.paper_id, r.title,r.email_of_author, r.paper_slug, r.data_statement,email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author, draft = true)
             
             return r
         end

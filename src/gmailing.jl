@@ -187,17 +187,26 @@ end
 
 case_id(journal,author,ms,round) = string(journal,"-",author,"-",ms,"-R",round)
 
-function gmail_g2g(first,paperID,title,email1,slug, data_statement ;email2 = nothing,)
+function gmail_g2g(first,paperID,title,email1,slug, data_statement ;email2 = nothing, draft = false)
 
     to_ = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
     to = [to_...,  "jpe@press.uchicago.edu"]
     body = gmail_g2g_body(first,paperID,title,data_statement)
-    gmail_send(
+    if draft
+        gmail_draft(
         to,
         "Reproducibility Checks for $(slug): Done.",
         body,
         []
     )
+    else
+        gmail_send(
+            to,
+            "Reproducibility Checks for $(slug): Done.",
+            body,
+            []
+        )
+    end
 end
 
 function gmail_g2g_body(first,paperID,title,data_statement)
