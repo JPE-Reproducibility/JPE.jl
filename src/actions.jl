@@ -658,6 +658,11 @@ function collect_reports(;verbose = false)
                     if verbose
                         println("✓ Successfully updated paper status to 'replicator_back_de'")
                     end
+                    @info "updating workloads"
+                    replicator_workload_report(update_gsheet=true)
+                
+                    @info "updating replicator assignments on gsheet"
+                    replicator_assignments( )
                 catch e
                     println("❌ Error updating paper status: $e")
                 end
@@ -741,9 +746,24 @@ end
     finalize_publication(paperID)
 
 Mark a paper as published after it has been published in the journal.
+Prompt user for the DOI of the package in deposit, such that it
+    can be added to the papers table.
+
+    Also, delete archive material on dropbox at this point.
+
+Function has 2 parts:
+1. using the DOI argument, retrieve a list of MD5 hashes for all files
+contained in the dataset on dataverse
+2. Retrieve same list of MD5 hashes for content of replication package in local dropbox
+3. Compare and report which files are different, if any
+4. If all good
+5. insert DOI in `papers` table
+6. set paper status to "publish" on dataverse
+7. Delete material from local dropbox (with interactive prompt and user confirmation)
 
 # Arguments
 - `paperID`: The ID of the paper
+- `DOI`: DOI of package on dataverse
 
 # Returns
 - The updated paper information

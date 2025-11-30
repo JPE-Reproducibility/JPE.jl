@@ -110,3 +110,108 @@ function force_git_clone(repo_url::String, local_path::String)
     
     return local_path
 end
+
+"""
+    sanitize_repo_name(name::AbstractString; interactive::Bool=true)
+
+Convert a personal name into a GitHub-safe ASCII repository name.
+Includes extensive transliteration rules and a final fallback that
+prompts the user for unknown characters if `interactive=true`.
+"""
+function sanitize_repo_name(name::AbstractString; interactive::Bool=true)
+    translit_map = Dict(
+        # Scandinavian & German
+        'ä'=>"ae",'ö'=>"oe",'ü'=>"ue",'Ä'=>"Ae",'Ö'=>"Oe",'Ü'=>"Ue",'ß'=>"ss",
+        'å'=>"aa",'Å'=>"Aa",'æ'=>"ae",'Æ'=>"Ae",'ø'=>"oe",'Ø'=>"Oe",
+
+        # Spanish
+        'á'=>"a",'é'=>"e",'í'=>"i",'ó'=>"o",'ú'=>"u",'ñ'=>"n",
+        'Á'=>"a",'É'=>"e",'Í'=>"i",'Ó'=>"o",'Ú'=>"u",'Ñ'=>"n",
+
+        # French / Portuguese
+        'ç'=>"c",'Ç'=>"C",'à'=>"a",'À'=>"a",'è'=>"e",'È'=>"e",'ù'=>"u",'Ù'=>"u",
+        'â'=>"a",'Â'=>"a",'ê'=>"e",'Ê'=>"e",'î'=>"i",'Î'=>"i",'ô'=>"o",'Ô'=>"o",
+        'û'=>"u",'Û'=>"u",'ë'=>"e",'Ë'=>"e",'ï'=>"i",'Ï'=>"i",'ÿ'=>"y",'Ÿ'=>"y",
+
+        # Italian
+        'ò'=>"o",'Ò'=>"o",'ì'=>"i",'Ì'=>"i",'ù'=>"u",'Ù'=>"u",
+
+        # Polish
+        'ą'=>"a",'Ą'=>"a",'ć'=>"c",'Ć'=>"c",'ę'=>"e",'Ę'=>"e",'ł'=>"l",'Ł'=>"l",
+        'ń'=>"n",'Ń'=>"n",'ś'=>"s",'Ś'=>"s",'ź'=>"z",'Ź'=>"z",'ż'=>"z",'Ż'=>"z",
+
+        # Czech / Slovak
+        'č'=>"c",'Č'=>"c",'ď'=>"d",'Ď'=>"d",'ě'=>"e",'Ě'=>"e",'ň'=>"n",'Ň'=>"n",
+        'ř'=>"r",'Ř'=>"r",'š'=>"s",'Š'=>"s",'ť'=>"t",'Ť'=>"t",'ž'=>"z",'Ž'=>"z",
+
+        # Hungarian
+        'ő'=>"o",'Ő'=>"o",'ű'=>"u",'Ű'=>"u",
+
+        # Romanian
+        'ă'=>"a",'Ă'=>"a",'ș'=>"s",'Ș'=>"s",'ş'=>"s",'ţ'=>"t",'ț'=>"t",
+        'Ț'=>"t",'Ţ'=>"t",
+
+        # Baltic
+        'ā'=>"a",'Ā'=>"a",'č'=>"c",'Č'=>"c",'ē'=>"e",'Ē'=>"e",'ģ'=>"g",'Ģ'=>"g",
+        'ī'=>"i",'Ī'=>"i",'ķ'=>"k",'Ķ'=>"k",'ļ'=>"l",'Ļ'=>"l",'ņ'=>"n",'Ņ'=>"n",
+        'ū'=>"u",'Ū'=>"u",
+
+        # Balkan (Croatian/Serbian/Slovenian/Albanian variants)
+        'đ'=>"d",'Đ'=>"d",'ć'=>"c",'Ć'=>"c",'š'=>"s",'Š'=>"s",'ž'=>"z",'Ž'=>"z"
+    )
+
+    # Step 1 — explicit transliteration
+    buf = IOBuffer()
+    unknown_chars = Char[]
+
+    for c in name
+        if haskey(translit_map, c)
+            print(buf, translit_map[c])
+        elseif c in 'A':'Z' || c in 'a':'z' || c in '0':'9' || isspace(c)
+            print(buf, c)
+        else
+            push!(unknown_chars, c)
+        end
+    end
+
+    # Step 2 — fallback for unknown chars:
+    if !isempty(unknown_chars)
+        # Try Unicode NFD decomposition and strip diacritics
+        decomposed = Unicode.normalize(name, :NFD)
+        stripped = replace(decomposed, r"\p{Mn}" => "")  # remove marks
+
+        # After stripping, check if any unexpected chars remain
+        still_bad = filter(c -> !(c in 'A':'Z' || c in 'a':'z' ||
+                                  c in '0':'9' || isspace(c)), stripped)
+
+        if !isempty(still_bad) && interactive
+            println("Unrecognized characters found: ", still_bad)
+            println("Enter a plain ASCII replacement for each character.")
+            repl = Dict{Char,String}()
+            for c in still_bad
+                print("Replacement for '$c': ")
+                repl[c] = readline()
+            end
+            # Apply the mapping
+            for (c, r) in repl
+                stripped = replace(stripped, string(c) => r)
+            end
+        end
+
+        write(buf, stripped)
+    end
+
+    s = String(take!(buf))
+
+    # Step 3 — whitespace → hyphens
+    s = replace(s, r"\s+" => "-")
+
+    # Step 4 — keep only allowed [a-z0-9._-]
+    s = replace(lowercase(s), r"[^a-z0-9._-]" => "")
+
+    # Step 5 — collapse hyphens and trim
+    s = replace(s, r"-+" => "-")
+    s = strip(s, '-')
+
+    return titlecase(s)
+end

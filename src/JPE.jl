@@ -34,7 +34,7 @@ using CSV
 using DataFramesMeta
 using PrettyTables  # re-exports Crayons
 using Statistics
-
+using Unicode
 
 global dbox_token = ""
 
@@ -50,6 +50,8 @@ include("actions.jl")
 include("zip.jl")
 include("reporting.jl")
 include("db_backups.jl")
+include("dataverse.jl")
+
 
 # Export reporting functions
 export global_report, paper_report, replicator_workload_report, time_in_status_report
@@ -71,6 +73,9 @@ const DB_PATH = joinpath(JPE_DB,"jpe.duckdb")
 
 const DB_LOCK = ReentrantLock()
 const DB_CONNECTION = Ref{Union{Nothing, Any}}(nothing)
+
+# dataverse token
+dvtoken() = ENV["JPE_DV"]
 
 # const con = DBInterface.connect(DuckDB.DB, _DB_PATH)
 
@@ -107,20 +112,13 @@ function __init__()
     # 2. gmail API
     @pyinclude(joinpath(@__DIR__,"gmail_client.py"))
 
+    
+
     if haskey(ENV,"JPE_TEST")
         @warn "running in test mode!"
     end
 
     show_logo()
-
-    # check_database_status()
-    println()
-    print("Would you like to fetch a database backup? (y/n): ")
-    response = readline()
-    if lowercase(strip(response)) == "y"
-        db_bk_fetch_latest()
-        db_bk_clean(50)
-    end
 
     papers_statuses()
     println()

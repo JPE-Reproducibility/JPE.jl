@@ -546,12 +546,12 @@ function calculate_replicator_workload(iterations_df, replicators_df)
     for replicator in eachrow(replicators_df)
         # Find papers assigned to this replicator
         replicator_papers1 = @chain current_papers begin
-            @subset(:replicator1 .== replicator.email)
+            @subset(:replicator1 .== replicator.email, :status .== "with_replicator")
             select(:paper_id, :round, :status)
         end
         
         replicator_papers2 = @chain current_papers begin
-            @subset(:replicator2 .== replicator.email)
+            @subset(:replicator2 .== replicator.email, :status .== "with_replicator")
             select(:paper_id, :round, :status)
         end
         
@@ -904,7 +904,7 @@ function report_latest_iteration(paperID; round = nothing)
 
     select!(x,
         "paper_id","round","repl_comments","is_success","is_confidential","is_confidential_shared",
-        "is_HPC","is_remote","hours1","hours2","software",
+        "is_HPC","is_remote","replicator1","replicator2","hours1","hours2","software",
         "data_statement")
 
     disp = DataFrame(

@@ -222,7 +222,7 @@ function google_arrivals()
     
     # Process each row
     for r in eachrow(y)
-        ghid = string(r.journal, "-", r.surname_of_author, "-", r.paper_id)
+        ghid = string(r.journal, "-", sanitize_repo_name(r.surname_of_author), "-", r.paper_id)
         @info "processing $ghid"
         cid = get_case_id(r.journal, r.paper_slug, r.round)
 
@@ -397,7 +397,7 @@ function read_google_arrivals( )
     if nrow(df) > 0
         df.paper_id .= google_paperid(df,"paper_id")
         df.journal .= clean_journalname.(df.journal)
-        df.paper_slug = get_paper_slug.(df.surname_of_author,df.paper_id)
+        df.paper_slug = get_paper_slug.(passmissing(sanitize_repo_name).(df.surname_of_author),df.paper_id)
         df.processed .= false
     end
 
