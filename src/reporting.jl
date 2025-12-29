@@ -661,7 +661,6 @@ end
 
 "get hours worked by replicator"
 function replicator_hours_worked()
-    d = 
     x1 = @chain db_df("iterations") begin
         # get all completed iterations
         subset(:date_completed_repl => ByRow(x -> !ismissing(x) ))
@@ -681,9 +680,11 @@ function replicator_hours_worked()
 end
 
 "gets list of hours worked and multiplies with hourly rate"
-function replicator_billing(; test_max_hours = 1.5, rate = 25.0, write_gs = false)
+function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, write_gs = false, EUR2USD = 1.1765)
 
+    rateUSD = rate * EUR2USD
     h = replicator_hours_worked()
+
 
     # for test case, pay max 2 hours
     h.hours .= ifelse.((.!ismissing.(h.comments)) .& (h.comments .== "[TEST]"), min.(h.hours,test_max_hours), h.hours)
@@ -699,11 +700,10 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, write_gs = fals
     end
 
     h_summary.pay_EUR = h_summary.hours .* rate
+    h_summary.pay_USD = h_summary.hours .* rateUSD
 
     # sending emails
-    replicators_df = @chain read_replicators() begin
-        select(:email,:name,:invoice)
-    end
+    replicators_df = read_replicators()
 
     current = string(year(today()),"-Q",quarterofyear(today()))
     println("sending billing information for " * current)
@@ -731,10 +731,17 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, write_gs = fals
         r = subset(replicators_df, :email => ByRow(==(search_email)))
         # println("trying $r")
         # println(g)
-        gmail_send_invoice(r.name[1],r.email[1],select(g,Not(:replicator)), test_max_hours,rate,r.invoice[1],send = true)
+        (sheet_row, col_idx,next_invoice_num) = replicator_next_invoice(replicators_df,r.email[1])
+
+        gmail_send_invoice(r.name[1],r.email[1],select(g,Not(:replicator)), test_max_hours,rate,EUR2USD,next_invoice_num,send = email)
+        # updated invoice field
+        if email
+            replicator_write_invoice(sheet_row,col_idx,string("INV-",next_invoice_num))
+        end
     end
 
-    x = select(h_summary, :replicator, :quarter, :case_id => ByRow(x -> length(x)) => :num_jobs, :hours, :pay_EUR)
+    x = select(h_summary, :replicator, :quarter, :case_id => ByRow(x -> length(x)) => :num_jobs, :hours, :pay_EUR, :pay_USD)
+    sort!(x,[:quarter,:replicator])
 
     if write_gs
         R"""
@@ -752,13 +759,44 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, write_gs = fals
     println("budget report:")
     b = combine(
         groupby(x, :quarter),
-        :hours => sum => :hours, :num_jobs => sum => :num_jobs, :pay_EUR => sum => :cost_EUR
+        :hours => sum => :hours, :num_jobs => sum => :num_jobs, :pay_EUR => sum => :cost_EUR, :pay_USD => sum => :cost_USD
     )
 
     pretty_table(b)
 
-    h
+    h, h_summary
 end
+
+function replicator_next_invoice(df, email)
+    # Find the row in the dt
+    row_idx = findfirst(==(email), df.email)
+    col_idx = findfirst(==("invoice"), names(df))
+
+    if isnothing(row_idx)
+        error("Name not found")
+    end
+    # Calculate the actual sheet row (accounting for header)
+    sheet_row = row_idx + 1
+
+    current_invoice = parse(Int,split(df[row_idx,:invoice], "-")[2])
+    next_invoice = current_invoice + 1
+    (sheet_row, col_idx,next_invoice)
+end
+
+function replicator_write_invoice(sheet_row,col_idx,next_invoice)
+    R"""
+    id = $(gs_replicators_id())
+    googlesheets4::range_write(
+    ss = id,
+    sheet = "confirmed",
+    data = data.frame(x = $next_invoice),
+    range = cellranger::cell_limits(ul = c($sheet_row, $col_idx), lr = c($sheet_row, $col_idx)),
+    col_names = FALSE,
+    reformat = FALSE
+    )
+    """
+end
+
 
 
 """
