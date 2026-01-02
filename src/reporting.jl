@@ -680,7 +680,7 @@ function replicator_hours_worked()
 end
 
 "gets list of hours worked and multiplies with hourly rate"
-function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, write_gs = false, EUR2USD = 1.1765)
+function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, write_gs = false, EUR2USD = 1.1765, email_repl_subset = nothing)
 
     rateUSD = rate * EUR2USD
     h = replicator_hours_worked()
@@ -712,15 +712,21 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, 
     if request(yes_no_menu) == 1 
         # nothing
     else
-        choice = Prompt("enter required quarter") |> ask
+        choice = Term.Prompts.Prompt("enter required quarter") |> ask
         current = choice
         println("sending emails about $choice")
+    end
+
+    # emailing setup: recipients
+    if !isnothing(email_repl_subset)
+        subset!(h, :replicator => ByRow(occursin(email_repl_subset)))
     end
 
     h_repl = @chain h begin
         subset(:quarter => ByRow(==(current)))
         groupby(:replicator)
     end
+
     for g in h_repl
         # update wrong email addresses
         search_email = if g.replicator[1] == "huiyann@ucsb.edu"
