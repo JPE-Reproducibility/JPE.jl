@@ -679,6 +679,7 @@ function replicator_hours_worked()
     append!(x1,x2)
 end
 
+# TODO use github username as unique identifier because emails change over time.
 "gets list of hours worked and multiplies with hourly rate"
 function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, write_gs = false, EUR2USD = 1.1765, email_repl_subset = nothing)
 
