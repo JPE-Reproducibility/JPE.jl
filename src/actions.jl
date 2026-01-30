@@ -27,11 +27,11 @@ function de_process_waiting_reports()
                 println("Accept or Revise and Resubmit?")
                 accept_or_reject = RadioMenu(["Accept", "Revise"])  # Default is first option (Accept)
                 if request(accept_or_reject) == 1
-                    process_editor_decision(r.paper_id,"accept")
+                    de_make_decision(r.paper_id,"accept")
                     @info "$(r.paper_id) successfully accepted"
 
                 else
-                    process_editor_decision(r.paper_id,"revise")
+                    de_make_decision(r.paper_id,"revise")
                     @info "processed $(r.paper_id) successfully"
                     @info "DRAFT email ready, need to send now!"
                 end
@@ -682,7 +682,7 @@ function collect_reports(;verbose = false)
 end
 
 """
-    process_editor_decision(paperID, decision)
+    de_make_decision(paperID, decision)
 
 Process the Data Editor's decision for a paper after reviewing replicator reports.
 
@@ -693,7 +693,7 @@ Process the Data Editor's decision for a paper after reviewing replicator report
 # Returns
 - The updated paper information
 """
-function process_editor_decision(paperID, decision)
+function de_make_decision(paperID, decision)
     # Get paper information
     paper = db_filter_paper(paperID)
     if nrow(paper) != 1

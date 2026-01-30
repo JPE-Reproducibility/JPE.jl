@@ -383,7 +383,7 @@ function read_google_arrivals( )
 
     # rename
     DataFrames.rename!(df, 
-        "first_name(s)_of_author" => "firstname_of_author",
+        "first_name_of_author" => "firstname_of_author",
         "please_indicate_the_journal" => "journal",
         "email_of_second_author_(if_applicable)" => "email_of_second_author",
         "manuscript_title" => "title",
