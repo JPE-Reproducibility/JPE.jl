@@ -35,6 +35,8 @@ using DataFramesMeta
 using PrettyTables  # re-exports Crayons
 using Statistics
 using Unicode
+using HTTP
+using JSON
 
 global dbox_token = ""
 

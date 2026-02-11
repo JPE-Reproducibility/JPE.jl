@@ -14,8 +14,6 @@ function dv_fetch_all_datasets(; subtree::String="JPE", include_size = true)
     all_items = []
     all_meta = []
 
-    prog = ProgressUnknown(desc = "Pages read:")
-
     while true
         url = "$base_url?$query_params&start=$start"
 
@@ -24,14 +22,13 @@ function dv_fetch_all_datasets(; subtree::String="JPE", include_size = true)
             error("Failed at start=$start: HTTP $(response.status)")
         end
 
-        data = JSON3.read(response.body)
+        data = JSON.read(response.body)
         items = data["data"]["items"]
-        @infiltrate
+        return items
         
-        next!(prog)
         
         if isempty(items) 
-            finish!(prog)
+            # finish!(prog)
             break
         end
 
@@ -61,7 +58,7 @@ function dv_get_dataset_total_size(persistent_id::String)
             return missing
         end
 
-        metadata = JSON3.read(response.body)
+        metadata = JSON.read(response.body)
         files = get(metadata["data"]["latestVersion"], "files", [])
         if isempty(files)
             return 0.0
@@ -185,7 +182,7 @@ function dv_get_dataset_by_doi(doi::String, token::String)
     response = HTTP.get(url, headers)
 
     # Parse the JSON response
-    dataset = JSON3.read(response.body)
+    dataset = JSON.read(response.body)
 
     # Return the dataset (or nothing if not found)
     return dataset["data"]  # Dataset details
@@ -232,22 +229,93 @@ function dv_download_dataset(doi_or_url::String)
 end
 
 
+function dv_get_dataset_metadata(doi::String)
+    url = "$(dvserver())/api/datasets/:persistentId/versions/:latest?persistentId=$(doi)"
+    headers = Dict("X-Dataverse-key" => dvtoken())
+    response = HTTP.get(url, headers)
+    result = JSON.parse(String(response.body))
+    
+    if result["status"] == "OK"
+        return result["data"]
+    else
+        error("API error: $(result["message"])")
+    end
+end
+
+
+function dv_get_file_list(meta::Dict)
+    return [(
+        filename = f["dataFile"]["filename"],
+        filesize = f["dataFile"]["filesize"],
+        md5      = f["dataFile"]["md5"]
+    ) for f in meta["files"]]
+end
+
+function dv_get_publication_citation(meta::Dict)
+    fields = meta["metadataBlocks"]["citation"]["fields"]
+    pub_field = findfirst(f -> f["typeName"] == "publication", fields)
+    isnothing(pub_field) && error("No publication field found")
+    return fields[pub_field]["value"][1]["publicationCitation"]["value"]
+end
+
+using MD5
+
+function local_file_md5s(root::String)
+    result = Dict{String, String}()  # md5 => relative path
+    for (dirpath, _, files) in walkdir(root)
+        for file in files
+            fullpath = joinpath(dirpath, file)
+            relpath_ = relpath(fullpath, root)
+            hash = bytes2hex(md5(read(fullpath)))
+            result[hash] = relpath_
+        end
+    end
+    return result
+end
+
+function check_replication_package(meta::Dict, local_root::String)
+    dv_files  = get_file_list(meta)
+    local_md5s = local_file_md5s(local_root)  # Dict: md5 => relpath
+
+    dv_md5s = Dict(f.md5 => f.filename for f in dv_files)
+
+    matched       = [(dv_name = dv_md5s[md5], local_path = path) 
+                     for (md5, path) in local_md5s if haskey(dv_md5s, md5)]
+    only_local    = [path for (md5, path) in local_md5s if !haskey(dv_md5s, md5)]
+    only_dv       = [name for (md5, name) in dv_md5s if !haskey(local_md5s, md5)]
+
+    return (matched = matched, only_local = only_local, only_dv = only_dv)
+end
+
+
 
 # for large datasets, need to download each file one by one.
 
+function dv_get_versions(doi)
+    url = "$(dvserver())/api/datasets/:persistentId/versions?persistentId=$(doi)"
+    headers = Dict("X-Dataverse-key" => dvtoken())
+    response = HTTP.get(url, headers)
+    result = JSON.read(response.body, Dict)
+    
+    if result["status"] == "OK"
+        return result["data"]
+    else
+        error("API error: $(result["message"])")
+    end
+
+end
+
 "get list of all files in a dataset"
 function dv_get_dataset_files(persistent_id::String)
-
-    url = "$(dvserver())/api/datasets/:persistentId?persistentId=$(persistent_id)"
+    url = "$(dvserver())/api/datasets/:persistentId/versions/:latest/files?persistentId=$(persistent_id)"
     headers = Dict("X-Dataverse-key" => dvtoken())
-    
     response = HTTP.get(url, headers)
-    dataset_metadata = JSON3.read(response.body)
-
-    if haskey(dataset_metadata["data"], "files")
-        return dataset_metadata["data"]["files"]
+    result = JSON.read(response.body, Dict)
+    
+    if result["status"] == "OK"
+        return result["data"]
     else
-        error("No files found in dataset.")
+        error("API error: $(result["message"])")
     end
 end
 
