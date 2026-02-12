@@ -176,6 +176,7 @@ function preprocess(paperID; which_round = nothing, copy_package = true)
 
     # * Push back
     # * Delete local repo
+    rm(repoloc, recursive = true, force = true)
 end
 
 
@@ -768,21 +769,113 @@ contained in the dataset on dataverse
 # Returns
 - The updated paper information
 """
-function finalize_publication(paperID)
-    update_paper_status(paperID, "acceptable_package", "published_package") do con
-        # Update iterations table
-        DBInterface.execute(con, """
-        UPDATE iterations
-        SET date_published = ?
-        WHERE paper_id = ? AND round = (
-            SELECT MAX(round) FROM iterations WHERE paper_id = ?
-        )
-        """, (today(), paperID, paperID))
-        
-        # Any other publication-related tasks
-        
-        return db_filter_paper(paperID)[1, :]
+function finalize_publication(paperID,doi)
+    
+    insert_doi!(paperID,doi)
+
+    # get file list and md5 hashes from dv
+    dv_meta = dv_get_dataset_metadata(doi)
+
+    # get location of local repo
+    paper = db_filter_paper(paperID)
+    if nrow(paper) != 1
+        error("Paper ID $paperID not found or has multiple entries")
     end
+    
+    r = NamedTuple(paper[1, :])
+    localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
+    package_path = joinpath(localloc, "replication-package")
+
+    file_checks = dv_check_replication_package(dv_meta,package_path)
+
+    dv_check_report(file_checks)
+
+    println("log paper as accepted in database?")
+    yes_no_menu = RadioMenu(["yes","no"])  # Default is first option 
+
+    answer = request(yes_no_menu)
+    if answer == 1
+        # continue
+        update_paper_status(paperID, "acceptable_package", "published_package") do con
+            # Update iterations table
+            DBInterface.execute(con, """
+            UPDATE iterations
+            SET date_published = ?
+            WHERE paper_id = ? AND round = (
+                SELECT MAX(round) FROM iterations WHERE paper_id = ?
+            )
+            """, (today(), paperID, paperID))
+            
+            # Any other publication-related tasks
+            
+            return 0
+        end
+    else
+        # exit without updating database.
+    end
+end
+
+function delete_dropbox_paper(paperID; round = nothing, dryrun = true)
+    paper = db_filter_paper(paperID)
+    if nrow(paper) != 1
+        error("Paper ID $paperID not found or has multiple entries")
+    end
+    r = NamedTuple(paper[1,:])
+
+    if isnothing(round)
+        @info "deleting all rounds for $paperID"
+        locallocs = [get_dbox_loc(r.journal, r.paper_slug, rr, full = true) for rr in 1:r.round]
+    else
+        @info "deleting round $round for $paperID"
+        locallocs = [get_dbox_loc(r.journal, r.paper_slug, round, full = true)]
+    end
+
+    delete_location(locallocs,dryrun = dryrun )
+end
+
+
+function delete_location( locallocs::Array ;dryrun = true)
+
+    NO_DELETE = ["thirdparty","preserve"]
+    preserved = String[]
+    
+    # Delete files first
+    for l in locallocs
+        for (root, dirs, files) in walkdir(l)
+            prs = filter(d -> any(x -> occursin(x, d), NO_DELETE), dirs)
+            if length(prs) > 0
+                println("preserving $prs")
+                append!(preserved, joinpath.(root, prs))  # fixed
+            end
+            filter!(d -> !any(x -> occursin(x, d), NO_DELETE), dirs)
+            for f in files
+                filepath = joinpath(root, f)
+                if !dryrun
+                    rm(filepath, force = true)
+                else
+                    println("would delete: $filepath")
+                end
+            end
+        end
+    end
+    
+    # Remove empty directories (bottom-up)
+    for l in locallocs
+        for (root, dirs, files) in walkdir(l; topdown=false)  # bottom-up
+            # Skip preserved directories
+            any(x -> occursin(x, root), NO_DELETE) && continue
+            
+            if isempty(readdir(root))  # directory is empty
+                if !dryrun
+                    rm(root, force=true)
+                else
+                    println("would delete empty dir: $root")
+                end
+            end
+        end
+    end
+    
+    preserved
 end
 
 
@@ -796,38 +889,13 @@ end
 
 
 function write_report(paperID)
-    # Get paper information
-    paper = db_filter_paper(paperID)
-    if nrow(paper) != 1
-        error("Paper ID $paperID not found or has multiple entries")
-    end
 
-    r = NamedTuple(paper[1, :])
+    r,repo_path = gh_pull(paperID)
 
     # Validate current status
     if r.status != "replicator_back_de"
         error("Paper must be in 'replicator_back_de' status to prepare RnR report")
     end    
-    # Set up paths
-    localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
-    repo_path = joinpath(localloc, "repo")
-    
-    # Handle repository - check if it exists first
-    if isdir(repo_path)
-        @info "Repository already exists at $repo_path"
-        # Pull latest changes instead of cloning
-        try
-            run(Cmd(`git pull`, dir=repo_path))
-            @info "Pulled latest changes from remote repository"
-        catch e
-            @warn "Could not pull latest changes: $e"
-            @info "You may need to commit your local changes first"
-        end
-    else
-        # Clone if it doesn't exist
-        gh_clone_branch(r.gh_org_repo, "round$(r.round)", to = repo_path)
-        @info "Cloned repository to $repo_path"
-    end
     
     # Rename the template file from TEMPLATE.qmd to the correct filename
     template_path = joinpath(repo_path, "TEMPLATE.qmd")
@@ -1091,4 +1159,64 @@ function paper_submitted_manually(id,round)
             @info "File request arrived! ✅"
         end
     end
+end
+
+function insert_doi!(paper_id,doi)
+    p = db_filter_paper(paper_id)
+    db_update_cell("papers","paper_id = $paper_id","doi","$doi")
+end
+
+# create 
+function make_test_package(pkg_root)
+    preserve = joinpath(pkg_root,"preserve-docs")
+    thirdparty = joinpath(pkg_root,"thirdparty")
+    papers = joinpath(pkg_root,"paper-appendices")
+    pkg_loc = joinpath(pkg_root,"replication-package")
+
+    pkg_data = joinpath(pkg_loc,"data")
+    pkg_code = joinpath(pkg_loc,"code")
+    mkpath(pkg_data)
+    mkpath(pkg_code)
+    mkpath(preserve)
+    mkpath(thirdparty)
+    mkpath(papers)
+
+    write(joinpath(preserve,"mydoc.txt"), randstring(1_000_000))
+    write(joinpath(thirdparty,"myletter.txt"), randstring(1_000_000))
+    write(joinpath(papers,"mypaper.txt"), randstring(1_000_000))
+
+
+    # make a readme
+    open(joinpath(pkg_loc,"README.md"), "w") do io
+        println(io, 
+        """
+        # [TESTING] Replication Package 
+
+        This readme is for my test replication package.
+
+        There is not much to see here.
+
+        Good night, and good luck.
+
+        """
+        )
+    end
+
+    # create a dataset
+    N = 1000
+    d = DataFrame(i = 1:N, y = rand(N), telephone = rand(N), lat = rand(N), income = rand(N))
+    CSV.write(joinpath(pkg_data,"data.csv"),d)
+
+    # some code
+    test_file = joinpath(pkg_code, "test_script.R")
+    open(test_file, "w") do io
+        println(io, "# Analysis script")
+        println(io, "data <- read.csv('file.csv')")
+        println(io, "df\$first_name <- clean_text(df\$name)")
+        println(io, "model <- lm(y ~ age + email + income)")
+        println(io, "summary(model)")
+    end
+
+    return pkg_loc
+
 end

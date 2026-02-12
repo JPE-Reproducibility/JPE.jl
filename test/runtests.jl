@@ -16,9 +16,15 @@ function with_test_db(f::Function)
     end
 end
 
+function folder_size(path)
+    sum(filesize(joinpath(root, f)) 
+        for (root, dirs, files) in walkdir(path) 
+        for f in files) / 1024^2
+end
 
 @testset "JPE.jl" begin
     # Write your tests here.
 
     include("test_duck.jl")
+    include("test_dropbox.jl")
 end

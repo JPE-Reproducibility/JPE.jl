@@ -2,6 +2,37 @@
 
 gh_delete_repo(url) = run(`gh repo delete $url --yes`)
 
+function gh_pull(paper_id; round=nothing)
+    paper = db_filter_paper(paper_id)
+    if nrow(paper) != 1
+        error("Paper ID $paperID not found or has multiple entries")
+    end
+
+    r = NamedTuple(paper[1, :])
+ 
+    # Set up paths
+    localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
+    repo_path = joinpath(localloc, "repo")
+    
+    # Handle repository - check if it exists first
+    if isdir(repo_path)
+        @info "Repository already exists at $repo_path"
+        # Pull latest changes instead of cloning
+        try
+            run(Cmd(`git pull`, dir=repo_path))
+            @info "Pulled latest changes from remote repository"
+        catch e
+            @warn "Could not pull latest changes: $e"
+            @info "You may need to commit your local changes first"
+        end
+    else
+        # Clone if it doesn't exist
+        gh_clone_branch(r.gh_org_repo, "round$(r.round)", to = repo_path)
+        @info "Cloned repository to $repo_path"
+    end
+    return (r,repo_path)
+end
+
 function gh_rename_branch(gh_url::String, old::String, new::String)
     cmd = Cmd([
         "gh", "api",

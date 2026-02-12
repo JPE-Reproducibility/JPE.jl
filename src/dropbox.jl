@@ -85,3 +85,28 @@ function dbox_fr_paper_urls(paperID)
     end
     return i
 end
+
+
+# check that files are downloaded if not trigger
+function is_placeholder(filepath)
+    # Check for FileProvider stub attribute
+    try
+        run(pipeline(`xattr -p com.apple.fileprovider.stubbed $filepath`, 
+                     stdout=devnull, stderr=devnull))
+        return true
+    catch
+        return false
+    end
+end
+
+function dbox_ensure_downloaded(filepath)
+    if is_placeholder(filepath)
+        println("Downloading: $filepath")
+        # Trigger download by reading the file
+        open(filepath, "r") do io
+            while !eof(io)
+                read(io, min(1024*1024, bytesavailable(io)))
+            end
+        end
+    end
+end

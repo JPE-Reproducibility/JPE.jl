@@ -37,6 +37,8 @@ using Statistics
 using Unicode
 using HTTP
 using JSON
+using MD5
+using Random
 
 global dbox_token = ""
 

@@ -817,6 +817,10 @@ function replicator_assignments(;update_gs = true)
         select(:paper_slug, :round, :replicator1, :replicator2,:date_assigned_repl, :date_assigned_repl => (x -> Dates.today() .- x) => :days_with_repl)
     end
 
+    if all(ismissing.(r.replicator2))
+        select!(r, Not(:replicator2))
+    end
+
     if update_gs      
         rr = copy(r)
         # rr.days_with_repl .= Dates.value.(rr.days_with_repl)
