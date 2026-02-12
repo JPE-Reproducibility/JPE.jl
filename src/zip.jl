@@ -10,7 +10,7 @@ Extracts zip files to the same directory where they reside.
 # Returns
 - `Vector{String}`: All file paths in the directory (after unzipping)
 """
-function read_and_unzip_directory(dir_path::String)
+function read_and_unzip_directory(dir_path::String; rm_zip = true)
     # Check if directory exists
     if !isdir(dir_path)
         throw(ArgumentError("Directory does not exist: $dir_path"))
@@ -44,7 +44,9 @@ function read_and_unzip_directory(dir_path::String)
         end
     end
 
-    rm.(zip_files, force = true)
+    if rm_zip
+        rm.(zip_files, force = true)
+    end
 
 
     

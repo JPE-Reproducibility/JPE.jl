@@ -4,6 +4,121 @@
 
 dvserver() = "https://dataverse.harvard.edu"
 
+
+"""
+Get all metadata associated to a dataverse dataset
+
+example
+```julia
+dv_get_dataset_metadata("doi:10.7910/DVN/VXR3XB")
+```
+"""
+function dv_get_dataset_metadata(doi::String)
+    url = "$(dvserver())/api/datasets/:persistentId/versions/:latest?persistentId=$(doi)"
+    headers = Dict("X-Dataverse-key" => dvtoken())
+    response = HTTP.get(url, headers)
+    result = JSON.parse(String(response.body))
+    
+    if result["status"] == "OK"
+        return result["data"]
+    else
+        error("API error: $(result["message"])")
+    end
+end
+
+
+function dv_get_file_list(meta::Dict)
+    return [(
+        filename = f["dataFile"]["filename"],
+        filesize = f["dataFile"]["filesize"],
+        md5      = f["dataFile"]["md5"]
+    ) for f in meta["files"]]
+end
+
+function dv_get_publication_citation(meta::Dict)
+    fields = meta["metadataBlocks"]["citation"]["fields"]
+    pub_field = findfirst(f -> f["typeName"] == "publication", fields)
+    isnothing(pub_field) && error("No publication field found")
+    return fields[pub_field]["value"][1]["publicationCitation"]["value"]
+end
+
+function local_file_md5s(root::String)
+    read_and_unzip_directory(root, rm_zip = false)
+    
+    result = Dict{String, @NamedTuple{path::String, basename::String}}()
+    for (dirpath, _, files) in walkdir(root)
+        # Skip __MACOSX and hidden directories
+        if contains(dirpath, "__MACOSX") || any(startswith(p, ".") for p in splitpath(dirpath))
+            continue
+        end
+        
+        for file in files
+            fullpath = joinpath(dirpath, file)
+            
+            # Skip zip files only at root level
+            if dirpath == root && endswith(file, ".zip")
+                continue
+            end
+            
+            relpath_ = relpath(fullpath, root)
+            hash = bytes2hex(md5(read(fullpath)))
+            result[hash] = (path = relpath_, basename = file)
+        end
+    end
+    return result
+end
+
+function dv_check_replication_package(meta::Dict, local_root::String)
+    dv_files  = dv_get_file_list(meta)
+    local_md5s = local_file_md5s(local_root)
+    dv_md5s = Dict(f.md5 => f.filename for f in dv_files)
+
+    matched       = [(dv_name = dv_md5s[md5], local_path = info.path) 
+                     for (md5, info) in local_md5s 
+                     if haskey(dv_md5s, md5) && dv_md5s[md5] == info.basename]
+    
+    hash_match_name_mismatch = [(dv_name = dv_md5s[md5], local_path = info.path, local_name = info.basename)
+                                for (md5, info) in local_md5s
+                                if haskey(dv_md5s, md5) && dv_md5s[md5] != info.basename]
+    
+    only_local    = [info.path for (md5, info) in local_md5s if !haskey(dv_md5s, md5)]
+    only_dv       = [name for (md5, name) in dv_md5s if !haskey(local_md5s, md5)]
+
+    return (matched = matched, 
+            hash_match_name_mismatch = hash_match_name_mismatch,
+            only_local = only_local, 
+            only_dv = only_dv)
+end
+
+function dv_check_report(nt::NamedTuple)
+    @info """
+    File checks on dataverse report:
+    1. md5 and names matched: $(length(nt.matched))
+    2. md5 matches, not name: $(length(nt.hash_match_name_mismatch))
+    3. files existing only locally: $(length(nt.only_local))
+    4. files existing only on dev: $(length(nt.only_dv))
+    """
+
+    println("want to see?")
+    yes_no_menu = RadioMenu(["no (n)","fully matched (f)","renamed on dv (r)","only local (missing on dv) (m)","only dv (missing local) (l)"],keybindings = ['n','f','r','m','l'])  # Default is first option 
+
+    answer = request(yes_no_menu)
+    if answer == 1
+        # nothing
+    elseif answer == 2
+        println(nt.matched)
+    elseif answer == 3
+        println(nt.hash_match_name_mismatch)
+    elseif answer == 4
+        println(nt.only_local)
+    elseif answer == 5
+        println(nt.only_dv)
+    end
+end
+
+
+
+
 function dv_fetch_all_datasets(; subtree::String="JPE", include_size = true)
 
     base_url = "$(dvserver())/api/search"
@@ -14,8 +129,6 @@ function dv_fetch_all_datasets(; subtree::String="JPE", include_size = true)
     all_items = []
     all_meta = []
 
-    prog = ProgressUnknown(desc = "Pages read:")
-
     while true
         url = "$base_url?$query_params&start=$start"
 
@@ -24,14 +137,13 @@ function dv_fetch_all_datasets(; subtree::String="JPE", include_size = true)
             error("Failed at start=$start: HTTP $(response.status)")
         end
 
-        data = JSON3.read(response.body)
+        data = JSON.read(response.body)
         items = data["data"]["items"]
-        @infiltrate
+        return items
         
-        next!(prog)
         
         if isempty(items) 
-            finish!(prog)
+            # finish!(prog)
             break
         end
 
@@ -61,7 +173,7 @@ function dv_get_dataset_total_size(persistent_id::String)
             return missing
         end
 
-        metadata = JSON3.read(response.body)
+        metadata = JSON.read(response.body)
         files = get(metadata["data"]["latestVersion"], "files", [])
         if isempty(files)
             return 0.0
@@ -75,16 +187,10 @@ function dv_get_dataset_total_size(persistent_id::String)
     end
 end
 
-
-function dv_filter_draft_review_datasets(datasets::Vector{Any})
-    # Filter datasets with "Draft" or "In Review" status
-    draft_review_items = filter(dataset -> begin
-        status_list = dataset["publicationStatuses"]
-        "Draft" in status_list || "In Review" in status_list
-    end, datasets)
-
-    return draft_review_items
+function dv_is_draft(meta::Dict)
+    return meta["versionState"] == "DRAFT"
 end
+
 
 function dv_filter_published_datasets(datasets::Vector{Any})
     published_items = filter(
@@ -185,7 +291,7 @@ function dv_get_dataset_by_doi(doi::String, token::String)
     response = HTTP.get(url, headers)
 
     # Parse the JSON response
-    dataset = JSON3.read(response.body)
+    dataset = JSON.read(response.body)
 
     # Return the dataset (or nothing if not found)
     return dataset["data"]  # Dataset details
@@ -233,21 +339,35 @@ end
 
 
 
+
+
 # for large datasets, need to download each file one by one.
+
+function dv_get_versions(doi)
+    url = "$(dvserver())/api/datasets/:persistentId/versions?persistentId=$(doi)"
+    headers = Dict("X-Dataverse-key" => dvtoken())
+    response = HTTP.get(url, headers)
+    result = JSON.read(response.body, Dict)
+    
+    if result["status"] == "OK"
+        return result["data"]
+    else
+        error("API error: $(result["message"])")
+    end
+
+end
 
 "get list of all files in a dataset"
 function dv_get_dataset_files(persistent_id::String)
-
-    url = "$(dvserver())/api/datasets/:persistentId?persistentId=$(persistent_id)"
+    url = "$(dvserver())/api/datasets/:persistentId/versions/:latest/files?persistentId=$(persistent_id)"
     headers = Dict("X-Dataverse-key" => dvtoken())
-    
     response = HTTP.get(url, headers)
-    dataset_metadata = JSON3.read(response.body)
-
-    if haskey(dataset_metadata["data"], "files")
-        return dataset_metadata["data"]["files"]
+    result = JSON.read(response.body, Dict)
+    
+    if result["status"] == "OK"
+        return result["data"]
     else
-        error("No files found in dataset.")
+        error("API error: $(result["message"])")
     end
 end
 
@@ -279,7 +399,7 @@ function download_dataset_files(api_token::String, server_url::String, persisten
     end
 end
 
-
+# z =JPE.dv_get_dataset_metadata("doi:10.7910/DVN/VXR3XB")
 
 
 
@@ -288,3 +408,4 @@ end
 # doi = "doi:10.7910/DVN/78W8M6"
 
 # dataset = get_dataset_by_doi(doi, token)
+# doi = "doi:10.7910/DVN/FJZVDK"

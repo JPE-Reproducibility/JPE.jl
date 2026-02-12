@@ -1867,3 +1867,14 @@ function db_latest_iteration(paperID)
     end
 
 end
+
+function db_get_doi(paperID)
+    x = robust_db_operation() do con
+        DBInterface.execute(con ,"""
+        SELECT doi
+        FROM papers
+        WHERE paper_id = ?
+        """, (paperID,))
+    end
+    first(x).doi
+end

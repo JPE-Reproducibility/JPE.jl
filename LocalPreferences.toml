@@ -1,0 +1,4 @@
+[RCall]
+Rhome = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources"
+libR = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/lib/libR.dylib"
+
