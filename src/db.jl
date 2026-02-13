@@ -627,11 +627,14 @@ function db_get_table_schema(table::String)
             "file_request_id_paper" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_url_paper" => Dict(:type => "VARCHAR", :constraints => ""),
             "date_with_authors" => Dict(:type => "DATE", :constraints => ""),
+            "date_published" => Dict(:type => "DATE", :constraints => ""),
             "is_remote" => Dict(:type => "BOOLEAN", :constraints => ""),
             "is_HPC" => Dict(:type => "BOOLEAN", :constraints => ""),
             "data_statement" => Dict(:type => "VARCHAR", :constraints => ""),
             "software" => Dict(:type => "VARCHAR", :constraints => ""),
             "github_url" => Dict(:type => "VARCHAR", :constraints => ""),
+            "doi" => Dict(:type => "VARCHAR", :constraints => ""),
+            "doi_paper" => Dict(:type => "VARCHAR", :constraints => ""),
             "gh_org_repo" => Dict(:type => "VARCHAR", :constraints => "")
         ),
         "form_arrivals" => Dict(

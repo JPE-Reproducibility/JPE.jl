@@ -771,7 +771,7 @@ contained in the dataset on dataverse
 """
 function finalize_publication(paperID,doi)
     
-    insert_doi!(paperID,doi)
+    insert_package_doi!(paperID,doi)
 
     # get file list and md5 hashes from dv
     dv_meta = dv_get_dataset_metadata(doi)
@@ -797,18 +797,12 @@ function finalize_publication(paperID,doi)
     if answer == 1
         # continue
         update_paper_status(paperID, "acceptable_package", "published_package") do con
-            # Update iterations table
+            # Update papers table
             DBInterface.execute(con, """
-            UPDATE iterations
+            UPDATE papers
             SET date_published = ?
-            WHERE paper_id = ? AND round = (
-                SELECT MAX(round) FROM iterations WHERE paper_id = ?
-            )
-            """, (today(), paperID, paperID))
-            
-            # Any other publication-related tasks
-            
-            return 0
+            WHERE paper_id = ? 
+            """, (today(), paperID))
         end
     else
         # exit without updating database.
@@ -1161,9 +1155,16 @@ function paper_submitted_manually(id,round)
     end
 end
 
-function insert_doi!(paper_id,doi)
+
+function insert_package_doi!(paper_id,doi)
     p = db_filter_paper(paper_id)
     db_update_cell("papers","paper_id = $paper_id","doi","$doi")
+end
+
+
+function insert_paper_doi!(paper_id,doi_paper)
+    p = db_filter_paper(paper_id)
+    db_update_cell("papers","paper_id = $paper_id","doi_paper","$doi_paper")
 end
 
 # create 

@@ -91,28 +91,31 @@ function dv_check_replication_package(meta::Dict, local_root::String)
 end
 
 function dv_check_report(nt::NamedTuple)
-    @info """
-    File checks on dataverse report:
-    1. md5 and names matched: $(length(nt.matched))
-    2. md5 matches, not name: $(length(nt.hash_match_name_mismatch))
-    3. files existing only locally: $(length(nt.only_local))
-    4. files existing only on dev: $(length(nt.only_dv))
-    """
 
-    println("want to see?")
-    yes_no_menu = RadioMenu(["no (n)","fully matched (f)","renamed on dv (r)","only local (missing on dv) (m)","only dv (missing local) (l)"],keybindings = ['n','f','r','m','l'])  # Default is first option 
-
-    answer = request(yes_no_menu)
-    if answer == 1
-        # nothing
-    elseif answer == 2
-        println(nt.matched)
-    elseif answer == 3
-        println(nt.hash_match_name_mismatch)
-    elseif answer == 4
-        println(nt.only_local)
-    elseif answer == 5
-        println(nt.only_dv)
+    answer = 0
+    
+    while answer < 6
+        @info """
+        File checks on dataverse report:
+        1. md5 and names matched: $(length(nt.matched))
+        2. md5 matches, not name: $(length(nt.hash_match_name_mismatch))
+        3. files existing only locally: $(length(nt.only_local))
+        4. files existing only on dev: $(length(nt.only_dv))
+        """
+        println("want to see?")
+        yes_no_menu = RadioMenu(["no (n)","fully matched (f)","md5 matches, not name (r)","only local (missing on dv) (m)","only dv (missing local) (l)","exit (e)"],keybindings = ['n','f','r','m','l','e'])  # Default is first option 
+        answer = request(yes_no_menu)
+        if answer == 1
+            # nothing
+        elseif answer == 2
+            println(nt.matched)
+        elseif answer == 3
+            println(nt.hash_match_name_mismatch)
+        elseif answer == 4
+            println(nt.only_local)
+        elseif answer == 5
+            println(nt.only_dv)
+        end
     end
 end
 

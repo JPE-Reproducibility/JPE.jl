@@ -404,9 +404,9 @@ function calculate_days_in_status(paper)
         iter = with_db() do con
             DataFrame(DBInterface.execute(con, """
                 SELECT date_published
-                FROM iterations
-                WHERE paper_id = ? AND round = ?
-            """, (paper.paper_id, paper.round)))
+                FROM papers
+                WHERE paper_id = ? 
+            """, (paper.paper_id, )))
         end
         
         if nrow(iter) > 0 && !ismissing(iter[1, :date_published])
