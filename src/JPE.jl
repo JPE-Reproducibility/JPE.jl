@@ -39,6 +39,7 @@ using HTTP
 using JSON
 using MD5
 using Random
+using PackageScanner
 
 global dbox_token = ""
 
@@ -55,6 +56,7 @@ include("zip.jl")
 include("reporting.jl")
 include("db_backups.jl")
 include("dataverse.jl")
+include("preprocess.jl")
 
 
 # Export reporting functions

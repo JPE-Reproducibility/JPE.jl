@@ -832,8 +832,8 @@ function replicator_assignments(;update_gs = true)
         append!(rr, DataFrame([fill(missing,maxrows - n) for _ in 1:ncol(rr)], names(rr)))
         # rr.days_with_repl .= "=ARRAYFORMULA(IF(E2:E$(maxrows)=\"\",\"\",TODAY()-E2:E$(maxrows)))"
 
-        formula_str = [string.("=IF(ISBLANK(E", collect(2:maxrows), "),\"\",TODAY()-E",collect(2:maxrows), ")")...,""]
-        range_str = "F2:F$(maxrows)"
+        formula_str = [string.("=IF(ISBLANK(D", collect(2:maxrows), "),\"\",TODAY()-D",collect(2:maxrows), ")")...,""]
+        range_str = "E2:E$(maxrows)"
 
         R"""
         id = $(gs_replicators_id())

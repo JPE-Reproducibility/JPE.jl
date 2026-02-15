@@ -235,7 +235,7 @@ function google_arrivals()
         @debug "repo exists?" gh_repo_exists(r.gh_org_repo)
 
         if !gh_repo_exists(r.gh_org_repo)
-            gh_silent_run(`gh repo create $(r.gh_org_repo) --private --template JPE-Reproducibility/JPEtemplate`)
+            gh_silent_run(`gh repo create $(r.gh_org_repo) --public --template JPE-Reproducibility/JPEtemplate`)
             
             wait_for_branch(r.gh_org_repo,"main")
 
