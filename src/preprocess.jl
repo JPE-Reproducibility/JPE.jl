@@ -132,27 +132,53 @@ function preprocess2(paperID; which_round = nothing)
         println(io, "journal: \"$(r.journal)\"")
         println(io, "paper_slug: \"$(r.paper_slug)\"")
         # Store relative path that runner will use to construct full Dropbox path
-        println(io, "dropbox_rel_path: \"$(get_dbox_loc(r.journal, r.paper_slug, r.round, full = false))\"")
+        println(io, "dropbox_rel_path: \"$(get_case_id(r.journal, r.paper_slug, r.round))\"")
     end
-    
+
     # Create runner script
     write_runner_script(repoloc)
     
-    # Commit both files
-    branch = "round$(round)"
-    cmd = """
-    git add _variables.yml runner_precheck.jl
-    git commit -m '🎯 Trigger precheck for round $(round)'
-    git push origin $branch
-    """
-    run(Cmd(`sh -c $cmd`, dir=repoloc))
-    
+    # check size of replication packge on dropbox and decide what to do
+    r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)
+    size_gb = dbox_get_folder_size(joinpath(r.file_request_path_full, "replication-package"))
+
+    @info "package has $size_gb GB."
+
+    println("Where to preprocess this?")
+    local_remote = RadioMenu(["local","gh-runner"])
+    if request(local_remote) == 1 # local
+        runner_env = ENV["JULIA_RUNNER_ENV"]
+        runner_script = joinpath(repoloc,"runner_precheck.jl")
+
+        
+        # in a new julia process
+        cmd = Cmd([
+            "julia", 
+            "--project=$runner_env", "$runner_script"
+        ])
+        withenv("SHELL" => "/opt/homebrew/bin/fish", "GITHUB_WORKSPACE" => "$repoloc") do
+            res = chomp(read(run(Cmd(cmd)),String))
+        end
+        @info "✓ Preprocess complete for paper $paperID round $round"
+
+    else
+        # runner
+        # Commit both files
+        branch = "round$(round)"
+        cmd = """
+        git add _variables.yml runner_precheck.jl
+        git commit -m '🎯 Trigger precheck for round $(round)'
+        git push origin $branch
+        """
+        run(Cmd(`sh -c $cmd`, dir=repoloc))
+        
+        @info "Monitor workflow at: $(r.github_url)/actions"
+    end
+
     cd(o) # go back
 
     # * Delete local repo
     rm(repoloc, recursive = true, force = true)
-    @info "✓ Preprocess complete for paper $paperID round $round"
-    @info "Monitor workflow at: $(r.github_url)/actions"
 end
 
 
@@ -160,13 +186,9 @@ end
 
 """
 Write the runner_precheck.jl script to the repository location.
-This script will be executed by the GitHub Actions runner.
+This script will be executed by the chosen runner.
 """
 function write_runner_script(repoloc::String)
-    """
-    Write the runner_precheck.jl script to the repository location.
-    This script will be executed by the GitHub Actions runner.
-    """
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
         write(io, """
         using YAML
@@ -225,8 +247,8 @@ function write_runner_script(repoloc::String)
         @info "Configuration loaded" vars
         
         # Construct paths
-        dropbox_base = get(ENV, "DROPBOX_BASE", joinpath(ENV["HOME"], "Dropbox"))
-        source_path = joinpath(dropbox_base, vars["dropbox_rel_path"], "replication-package")
+        
+        source_path = joinpath(ENV["JPE_DBOX_APPS"], vars["dropbox_rel_path"], "replication-package")
         dest_path = joinpath(ENV["GITHUB_WORKSPACE"], "replication-package")
         
         @info "Paths configured" GITHUB_WORKSPACE=ENV["GITHUB_WORKSPACE"] source_path dest_path
@@ -260,8 +282,8 @@ function write_runner_script(repoloc::String)
             if isdir(dest_path)
                 rm(dest_path; recursive=true, force=true)
             end
-            
-            cp(source_path, dest_path; force=true)
+            @warn "using PackageScanner.mycp as workaround here"
+            PackageScanner.mycp(source_path, dest_path; recursive = true, force=true)
             
             elapsed = time() - start_time
             @info "✓ Package copied successfully in \$(round(elapsed, digits=2)) seconds"

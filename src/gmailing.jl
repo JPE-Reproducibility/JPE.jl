@@ -464,3 +464,98 @@ end
 function gmail_draft(to,subject,body,attachments; from = "'JPE Data Editor' <jpe.dataeditor@gmail.com>")
     py"create_draft"(to,subject,body,from,attachments)
 end
+
+
+function generate_upload_instructions(paperid::String)
+    # generate presigned upload URL via mc
+    mc_output = readchomp(`mc share upload --recursive onyxia/floswald/uploads/$paperid`)
+    
+    # extract the curl command
+    curl_line = filter(l -> startswith(l, "Share:"), split(mc_output, "\n"))
+    curl_cmd = replace(first(curl_line), "Share: " => "")
+    curl_cmd = replace(curl_cmd, "curl " => "curl --progress-bar ")
+
+    
+    # write shell script - user provides filepath as $1 argument
+    script_path = joinpath(tempdir(), "upload_$(paperid).sh")
+    open(script_path, "w") do io
+        write(io, """#!/bin/bash
+FILE=\$1
+$(replace(curl_cmd, "<FILE>" => "\$FILE", "<NAME>" => "/\$(basename \$FILE)"))
+""")
+    end
+    chmod(script_path, 0o755)
+        
+    return script_path
+end
+
+
+function gmail_send_s3(paperID)
+    df = db_filter_paper(paperID)
+    r = NamedTuple(df[1, :])
+    path = generate_upload_instructions(paperID)
+
+    gmail_s3_request(r.firstname_of_author, paperID,r.title,author_email(r.email_of_author),path,email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author))
+
+end
+
+function gmail_s3_request(name,paperID,title,email1,attachment;email2 = nothing,isdraft = true)
+    
+    to = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
+    body = gmail_s3_request_body(name,paperID,title)
+    if isdraft
+        gmail_draft(
+            to,
+            "JPE Replication Package $paperID S3 Upload Request",
+            body,
+            [attachment]
+        )
+
+    else
+
+        gmail_send(
+            to,
+            "JPE Replication Package $paperID S3 Upload Request",
+            body,
+            [attachment]
+        )
+    end
+end
+
+
+function gmail_s3_request_body(first,paperID,title)
+    @debug first paperID title
+
+    m1 = """
+    Dear $first,
+    <br>
+    <br>
+    I am sending you a bash script to upload your replication package for your paper titled \"$title\", with manuscript ID $paperID into our S3 secure filestore. The dropbox approach is not suitable for your large package, unfortunately. My solution below requires you to have access to a bash command line. Please let me know if that is an issue and we will look for alternatives.
+
+        <br>
+        <br>
+
+    You should upload this using the attached bash script, which contains a <code>curl</code> command - please have a look at the command before you run it. Running it works as follows:
+
+    <br>
+    <ol>
+    <li> Save the attached file <code>upload_$(paperID).sh</code> to your downloads directory.
+    <li> In your command line terminal, navigate to the downloads folder.
+    <li> In your downloads folder, make the script executable on the command line with <code>chmod +x upload_$(paperID).sh</code>.
+    <li> From there, run it as a bash script: <code>./upload_$(paperID).sh /path/to/your/replication.zip</code>
+    <li> If you have multiple files, just repeat: <code>./upload_$(paperID).sh /path/to/your/data.zip</code>
+    </ol>
+
+    <i>Notice the script works only for the next 7 days!</i>
+    <br>
+    <br>
+    I'm looking forward to receiving your replication package. 
+    <br>
+    <br>
+
+    Best wishes,<br>
+    Florian
+    """
+
+    string(m1,signature())
+end

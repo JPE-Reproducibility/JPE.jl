@@ -371,17 +371,18 @@ function assign_replicators(paperID, selection)
     paper_row = db_df_where("papers", "paper_id", paperID)[1, :]
     caseID = case_id(paper_row.journal, paper_row.surname_of_author, paperID, current_round)
     
-    # Send email
-    if !isnothing(secondary_email)
-        gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, 
-                    first2=secondary_name, email2=secondary_email, back=is_subsequent_round)
-    else
-        gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, back=is_subsequent_round)
-    end
+
 
      
     # Update database entries using robust status update pattern
     update_paper_status(paperID, "author_back_de", "with_replicator") do con
+            # Send email
+        if !isnothing(secondary_email)
+            gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, 
+                        first2=secondary_name, email2=secondary_email, back=is_subsequent_round)
+        else
+            gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, back=is_subsequent_round)
+        end
         # Update iterations table
         DBInterface.execute(con, """
         UPDATE iterations

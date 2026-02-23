@@ -110,3 +110,44 @@ function dbox_ensure_downloaded(filepath)
         end
     end
 end
+
+function dbox_get_folder_size(path)
+    api_path = startswith(path, "/") ? path : "/" * path
+    token = dbox_token
+    @info "looking for $path"
+    
+    # List folder recursively
+    response = HTTP.post(
+        "https://api.dropboxapi.com/2/files/list_folder",
+        ["Authorization" => "Bearer $token", "Content-Type" => "application/json"],
+        JSON.json(Dict("path" => api_path, "recursive" => true))
+    )
+    
+    data = JSON.parse(String(response.body))
+    
+    total_size = 0
+    for entry in data["entries"]
+        if entry[".tag"] == "file"
+            total_size += entry["size"]
+        end
+    end
+    
+    # Handle pagination if there are more results
+    while get(data, "has_more", false)
+        response = HTTP.post(
+            "https://api.dropboxapi.com/2/files/list_folder/continue",
+            ["Authorization" => "Bearer $token", "Content-Type" => "application/json"],
+            JSON.json(Dict("cursor" => data["cursor"]))
+        )
+        
+        data = JSON.parse(String(response.body))
+        
+        for entry in data["entries"]
+            if entry[".tag"] == "file"
+                total_size += entry["size"]
+            end
+        end
+    end
+    
+    return round(total_size / 1024^3,digits = 2)  # GB
+end
