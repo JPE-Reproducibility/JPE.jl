@@ -1,3 +1,29 @@
+
+function disk_size_gb(path::String)
+    if isfile(path)
+        # For a file, just return its size
+        return filesize(path)
+    elseif isdir(path)
+        # For a directory, sum all file sizes recursively
+        total = 0
+        for (root, dirs, files) in walkdir(path)
+            for file in files
+                filepath = joinpath(root, file)
+                try
+                    total += filesize(filepath)
+                catch e
+                    @warn "Could not get size of file" filepath exception=e
+                end
+            end
+        end
+        return total / 1024^3
+    else
+        error("Path does not exist: $path")
+    end
+end
+
+
+
 """
     read_and_unzip_directory(dir_path::String)
 

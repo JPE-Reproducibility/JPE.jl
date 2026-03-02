@@ -69,7 +69,7 @@ function dispatch()
         println("dispatch $cid ?")
         yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
         if request(yes_no_menu) == 1
-            preprocess(r.paper_id)
+            preprocess2(r.paper_id)
             assign(r.paper_id)  # needs to prompt for which replicator
         else
             println("skipping $cid")
@@ -87,97 +87,6 @@ function dispatch()
 
 end
 
-
-function preprocess(paperID; which_round = nothing, copy_package = true)
-    
-    # get row from "iterations"
-    p = db_filter_paper(paperID)
-    round = if isnothing(which_round)
-        p.round[1]
-    else
-        which_round
-    end
-    @info "preprocessing $paperID round $round"
-
-    rt = db_filter_iteration(paperID,round)
-    if nrow(rt) != 1
-        error("can only get a single row here")
-    end
-    r = rt[1,:] # dataframerow
-
-    # create a temp dir
-    d = tempdir()
-    @show repoloc = joinpath(d,string(paperID,"-",round))
-    o = pwd()
-    cd(d)
-
-    # clone branch current "round"
-    gh_clone_branch(r.gh_org_repo,"round$(round)", to = repoloc)
-    
-    # * copy round version from Dropbox to local repo into temp location
-       
-    # recompute file request full path for local machine
-    r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)  
-    if copy_package
-        @info "copying package to temp loc"
-        mycp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), recursive = true, force = true)
-    else
-        @info "manual copy of large package"
-        println("done copying?")
-        println("copy from")
-        println(joinpath(r.file_request_path_full,"replication-package"))
-        println("to")
-        println(joinpath(repoloc,"replication-package"))
-
-        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
-        if request(yes_no_menu) == 1
-            println("continuing")
-        else
-            println("not continuing")
-            return 0
-        end
-
-    end
-
-    zips = read_and_unzip_directory(joinpath(repoloc,"replication-package"))
-
-    @debug readdir(repoloc)
-
-    # in a new julia process
-    cmd = Cmd([
-        "julia", 
-        "--project=.", "-e",
-        "using JPEtools; JPEtools.precheck_package(\"$(joinpath(repoloc,"replication-package"))\")"
-    ])
-
-    res = chomp(read(run(Cmd(cmd; dir = ENV["JPE_TOOLS_JL"])),String))
-
-    # * write the _variables.yml file for the report template
-    open(joinpath(repoloc,"_variables.yml"), "w") do io
-        println(io, "title: \"$(r.title)\"" )
-        println(io, "author: \"$(r.surname_of_author)\"" )
-        println(io, "round: $(round)" )
-        println(io, "repo: \"$(r.github_url)\"" )
-        println(io, "paper_id: $(r.paper_id)" )
-    end
-    @debug readlines(joinpath(repoloc,"_variables.yml"))
-
-    # * commit all except data
-    branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
-
-    cmd = """
-    git add .
-    git commit -m '🚀 prechecks round $(round)'
-    git push origin $branch
-    """
-    @show gr = read(Cmd(`sh -c $cmd`, dir=repoloc),String)
-    
-    cd(o) # go back
-
-    # * Push back
-    # * Delete local repo
-    rm(repoloc, recursive = true, force = true)
-end
 
 
 function mycp(src::AbstractString, dst::AbstractString; recursive::Bool = false, force::Bool=false)
@@ -462,17 +371,18 @@ function assign_replicators(paperID, selection)
     paper_row = db_df_where("papers", "paper_id", paperID)[1, :]
     caseID = case_id(paper_row.journal, paper_row.surname_of_author, paperID, current_round)
     
-    # Send email
-    if !isnothing(secondary_email)
-        gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, 
-                    first2=secondary_name, email2=secondary_email, back=is_subsequent_round)
-    else
-        gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, back=is_subsequent_round)
-    end
+
 
      
     # Update database entries using robust status update pattern
     update_paper_status(paperID, "author_back_de", "with_replicator") do con
+            # Send email
+        if !isnothing(secondary_email)
+            gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, 
+                        first2=secondary_name, email2=secondary_email, back=is_subsequent_round)
+        else
+            gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, back=is_subsequent_round)
+        end
         # Update iterations table
         DBInterface.execute(con, """
         UPDATE iterations

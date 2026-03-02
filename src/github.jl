@@ -1,6 +1,7 @@
 
 
 gh_delete_repo(url) = run(`gh repo delete $url --yes`)
+gh_create_repo(gh_org_repo) = run(`gh repo create $(gh_org_repo) --public --template JPE-Reproducibility/JPEtemplate`)
 
 function gh_pull(paper_id; round=nothing)
     paper = db_filter_paper(paper_id)
