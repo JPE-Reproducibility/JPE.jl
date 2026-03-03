@@ -23,6 +23,11 @@ db_bk_create()
 ```
 """
 function db_bk_create(; verbose::Bool=true, keep_backups::Int=10)
+
+    # write tables to csv!
+    db_write_backup("papers",db_df("papers"))
+    db_write_backup("iterations",db_df("iterations"))
+
     # Get directories from environment variables
     source_dir = get(ENV, "JPE_DB", nothing)
     dest_dir = get(ENV, "JPE_DB_BACKUPS", nothing)

@@ -1,4 +1,4 @@
-db_statuses() = ["new_arrival","with_author","with_replicator","replicator_back_de","author_back_de","acceptable_package","published_package"]
+db_statuses() = ["new_arrival","with_replicator","replicator_back_de","author_back_de","with_author","acceptable_package","published_package"]
 
 "replace missing with nothing"
 missnothing(x) = ismissing(x) ? nothing : x
@@ -51,7 +51,7 @@ function db_connection_status()
     end
 end
 
-db_write_backup(table,y) = safe_csv_append(joinpath(JPE_DB,"$table.csv"), y)
+db_write_backup(table,y) = CSV.write(joinpath(JPE_DB,"$table.csv"), y)
 db_read_backup(table) = CSV.read(joinpath(JPE_DB,"$table.csv"), DataFrame)
 
 function safe_csv_append(path::String, df::DataFrame)

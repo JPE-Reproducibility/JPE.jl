@@ -40,7 +40,6 @@ using JSON
 using MD5
 using Random
 using PackageScanner
-using ShiftedArrays
 using CategoricalArrays
 
 global dbox_token = ""
@@ -63,9 +62,9 @@ include("preprocess.jl")
 
 
 # Export reporting functions
-export global_report, paper_report, replicator_workload_report, time_in_status_report
+export ps
 # Export database functions
-export db_df, db_filter_paper, db_statuses
+export db_df, db_filter_paper
 
 
 function dbox_set_token()
@@ -129,7 +128,7 @@ function __init__()
 
     show_logo()
 
-    papers_statuses()
+    ps()
     println()
     
     @info "Module loaded ok"

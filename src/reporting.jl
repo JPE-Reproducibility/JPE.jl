@@ -863,8 +863,8 @@ function replicator_assignments(;update_gs = true)
     r
 end
 
-
-function papers_statuses()
+"status table for all papers"
+function ps()
 
     p = db_df("papers")
 
@@ -876,11 +876,15 @@ function papers_statuses()
         subset(:comments => ByRow(x -> (ismissing(x) | (x !=("[TEST]")))))
         groupby(:status)
         combine(:paper_slug,:paper_id, :round)
-        select(:status,:paper_slug,:round, :paper_id)
+        select(:status => (x -> categorical(x, levels = db_statuses())) => :status,:paper_slug,:round, :paper_id)
         leftjoin(x, on = :paper_id)
         select(Not(:paper_id))
-        sort([:status, :days_in_status])
+        # sort( :days_in_status, rev = true)
     end
+    sort!(df, [:status, :days_in_status], rev = [false,true])
+    # return df
+    
+
     # days = 
     # Define highlighters - no Crayons needed!
     highlighters = (
@@ -899,7 +903,7 @@ function papers_statuses()
         Highlighter(f = (data, i, j) -> data[i, 1] == "published_package", 
                     crayon = Crayon(background = :light_cyan))  
     )
-    pretty_table(df, highlighters = highlighters)
+    pretty_table(df, highlighters = highlighters, header = names(df))
 
 end
 
@@ -992,58 +996,4 @@ function wrap_text(text, width=60)
     
     push!(lines, str)
     return join(lines, "\n")
-end
-
-# clean iterations table
-function report_clean_iters(ndays = 10)
-    # load table
-    i = @chain db_df("iterations") begin
-        subset(:comments => ByRow(x -> ismissing(x) || x != "[TEST]"))
-    end
-    cols = [:paper_slug, :round, :date_completed_repl,:hours1,:date_decision_de, :date_with_authors,:date_arrived_from_authors,:first_arrival_date]
-    select!(i, cols, setdiff(names(i),cols))
-
-    # look only at completed iterations, i.e. ones where field "date_completed_repl" if complete.
-    i = subset!(i, :date_completed_repl => ByRow(x -> !ismissing(x)))
-
-    # add a date bin for later aggregation by date
-    transform!(i, :date_arrived_from_authors => (d -> begin
-        origin = minimum(skipmissing(d))
-        origin .+ Day.(div.(Dates.value.(skipmissing(d) .- origin), ndays) .* ndays .+ floor(ndays/2))
-    end) => :date_bin)
-
-    # hours spent by iteration
-    proc_times = @chain i begin
-        transform(
-            [:hours1, :hours2] => ByRow((x,y) -> sum(skipmissing([x , y]))) => :hours_spent,
-            [:date_assigned_repl, :date_arrived_from_authors] => ByRow((x,y) -> coalesce(x - y,Day(0))) => :time_assign,
-            [:date_completed_repl,:date_assigned_repl] => ByRow((x,y) -> coalesce(x - y,Day(0))) => :time_replication,
-            [:date_decision_de,:date_completed_repl] => ByRow((x,y) -> coalesce(x - y,Day(0))) => :time_decision,
-            )
-    end
-
-    sort!(i, [:paper_slug,:round])
-    resub_times = @chain i begin
-        groupby(:paper_slug)
-        subset(:round => (x -> maximum(x) > 1))
-        groupby(:paper_slug)
-        transform([:date_arrived_from_authors,:date_decision_de] => ((x,y) -> x .- ShiftedArrays.lag(y,1)) => :time_resubmission)
-        select(:paper_slug,:time_resubmission,:round)
-    end
-    proc_times = leftjoin(proc_times,resub_times, on = [:paper_slug, :round])
-
-
-    # aggregate up to paper level
-    proc_times_p = @chain proc_times begin
-        groupby(:paper_slug)
-        combine(
-            :hours_spent => ( x -> sum(skipmissing(x)) ) => :hours_spent,
-            :time_assign => ( x -> sum(skipmissing(x)) ) => :time_assign,
-            :time_replication => ( x -> sum(skipmissing(x)) ) => :time_replication,
-            :time_decision => ( x -> sum(skipmissing(x)) ) => :time_decision,
-            :time_resubmission => ( x -> sum(skipmissing(x)) ) => :time_resubmission,
-        )
-    end
-
-    proc_times, proc_times_p
 end

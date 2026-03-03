@@ -12,8 +12,8 @@ mkdir -p "$DEST"
 cp -v "$SOURCE/jpe.duckdb" "$DEST/backup_$DATE.duckdb"
 cp -v "$SOURCE/arrivals.csv" "$DEST/backup_${DATE}_arrivals.csv"
 cp -v "$SOURCE/papers.csv" "$DEST/backup_${DATE}_papers.csv"
-# cp "$SOURCE/reports.csv" "$DEST/backup_$DATE_reports.csv"
-# cp "$SOURCE/iterations.csv" "$DEST/backup_$DATE_iterations.csv"
+cp -v "$SOURCE/reports.csv" "$DEST/backup_${DATE}_reports.csv"
+cp -v "$SOURCE/iterations.csv" "$DEST/backup_${DATE}_iterations.csv"
 
 # Keep only the 10 most recent backups, delete the rest
 ls -1t "$DEST"/backup_*.duckdb | tail -n +11 | while read -r old_backup; do
