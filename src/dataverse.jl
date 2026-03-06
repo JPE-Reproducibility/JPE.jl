@@ -100,26 +100,44 @@ function dv_check_report(nt::NamedTuple)
         1. md5 and names matched: $(length(nt.matched))
         2. md5 matches, not name: $(length(nt.hash_match_name_mismatch))
         3. files existing only locally: $(length(nt.only_local))
-        4. files existing only on dev: $(length(nt.only_dv))
+        4. files existing only on dv: $(length(nt.only_dv))
         """
         println("want to see?")
-        yes_no_menu = RadioMenu(["no (n)","fully matched (f)","md5 matches, not name (r)","only local (missing on dv) (m)","only dv (missing local) (l)","exit (e)"],keybindings = ['n','f','r','m','l','e'])  # Default is first option 
+        yes_no_menu = RadioMenu(["no (n)","1. md5 and names matched (m)","2. md5 matches, not name (r)","3. files existing only locally (l)","4. files existing only on dv (d)","exit (e)"],keybindings = ['n','m','r','l','d','e'])  # Default is first option 
         answer = request(yes_no_menu)
         if answer == 1
             # nothing
         elseif answer == 2
-            println(nt.matched)
+            pretty_table(select(DataFrame(nt.matched), :dv_name, :local_name), header = [:dv_name, :local_name])
         elseif answer == 3
-            println(nt.hash_match_name_mismatch)
+            pretty_table(select(DataFrame(nt.hash_match_name_mismatch), :dv_name, :local_name), header = [:dv_name, :local_name])
         elseif answer == 4
-            println(nt.only_local)
+            run(pipeline(IOBuffer(join(nt.only_local, "\n")), `cat`, `less`))
         elseif answer == 5
-            println(nt.only_dv)
+            run(pipeline(IOBuffer(join(nt.only_dv, "\n")), `cat`, `less`))
         end
     end
 end
 
+function dv_get_file_report(paperID)
+    # get location of local repo
+    paper = db_filter_paper(paperID)
+    if nrow(paper) != 1
+        error("Paper ID $paperID not found or has multiple entries")
+    end
 
+    doi = get_package_doi(paperID)
+    # get file list and md5 hashes from dv
+    dv_meta = dv_get_dataset_metadata(doi)
+
+    r = NamedTuple(paper[1, :])
+    localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
+    package_path = joinpath(localloc, "replication-package")
+
+    file_checks = dv_check_replication_package(dv_meta,package_path)
+
+    dv_check_report(file_checks)
+end
 
 
 function dv_fetch_all_datasets(; subtree::String="JPE", include_size = true)

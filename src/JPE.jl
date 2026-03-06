@@ -39,7 +39,6 @@ using HTTP
 using JSON
 using MD5
 using Random
-using PackageScanner
 using CategoricalArrays
 
 global dbox_token = ""

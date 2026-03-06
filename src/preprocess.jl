@@ -1,102 +1,5 @@
 
-"to be deprecated"
-function preprocess(paperID; which_round = nothing, copy_package = true)
-    
-    # get row from "iterations"
-    p = db_filter_paper(paperID)
-    round = if isnothing(which_round)
-        p.round[1]
-    else
-        which_round
-    end
-    @info "preprocessing $paperID round $round"
-
-    rt = db_filter_iteration(paperID,round)
-    if nrow(rt) != 1
-        error("can only get a single row here")
-    end
-    r = rt[1,:] # dataframerow
-
-    # create a temp dir
-    d = tempdir()
-    @show repoloc = joinpath(d,string(paperID,"-",round))
-    o = pwd()
-    cd(d)
-
-    # clone branch current "round"
-    gh_clone_branch(r.gh_org_repo,"round$(round)", to = repoloc)
-    
-    # * copy round version from Dropbox to local repo into temp location
-       
-    # recompute file request full path for local machine
-    r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)  
-    if copy_package
-        @info "copying package to temp loc"
-        mycp(joinpath(r.file_request_path_full,"replication-package"),joinpath(repoloc,"replication-package"), recursive = true, force = true)
-    else
-        @info "manual copy of large package"
-        println("done copying?")
-        println("copy from")
-        println(joinpath(r.file_request_path_full,"replication-package"))
-        println("to")
-        println(joinpath(repoloc,"replication-package"))
-
-        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
-        if request(yes_no_menu) == 1
-            println("continuing")
-        else
-            println("not continuing")
-            return 0
-        end
-
-    end
-
-    zips = read_and_unzip_directory(joinpath(repoloc,"replication-package"))
-
-    @debug readdir(repoloc)
-
-    # in a new julia process
-    cmd = Cmd([
-        "julia", 
-        "--project=.", "-e",
-        "using PackageScanner; PackageScanner.precheck_package(\"$(joinpath(repoloc,"replication-package"))\")"
-    ])
-
-    PackageScanner.precheck_package(joinpath(repoloc,"replication-package"))
-
-    # res = chomp(read(run(Cmd(cmd; dir = ENV["JPE_TOOLS_JL"])),String))
-    # res = chomp(read(run(Cmd(cmd)),String))
-
-    # * write the _variables.yml file for the report template
-    open(joinpath(repoloc,"_variables.yml"), "w") do io
-        println(io, "title: \"$(r.title)\"" )
-        println(io, "author: \"$(r.surname_of_author)\"" )
-        println(io, "round: $(round)" )
-        println(io, "repo: \"$(r.github_url)\"" )
-        println(io, "paper_id: $(r.paper_id)" )
-    end
-    @debug readlines(joinpath(repoloc,"_variables.yml"))
-
-    # * commit all except data
-    branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
-
-    cmd = """
-    git add .
-    git commit -m '🚀 prechecks round $(round)'
-    git push origin $branch
-    """
-    @show gr = read(Cmd(`sh -c $cmd`, dir=repoloc),String)
-    
-    cd(o) # go back
-
-    # * Push back
-    # * Delete local repo
-    rm(repoloc, recursive = true, force = true)
-end
-
-
-
-function preprocess2(paperID; which_round = nothing)
+function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_file_size_gb = 2)
         
     # get row from "iterations"
     p = db_filter_paper(paperID)
@@ -121,6 +24,12 @@ function preprocess2(paperID; which_round = nothing)
 
     # clone branch current "round"
     gh_clone_branch(r.gh_org_repo, "round$(round)", to = repoloc)
+
+    # check size of replication packge on dropbox and decide what to do
+    r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)
+    size_gb = dbox_get_folder_size(joinpath(r.file_request_path_full, "replication-package"))
+
+    @info "package has $size_gb GB."
     
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
@@ -133,17 +42,14 @@ function preprocess2(paperID; which_round = nothing)
         println(io, "paper_slug: \"$(r.paper_slug)\"")
         # Store relative path that runner will use to construct full Dropbox path
         println(io, "dropbox_rel_path: \"$(get_case_id(r.journal, r.paper_slug, r.round))\"")
+        println(io, "package_size_gb: $(size_gb)")
+        println(io, "package_max_file_size_gb: $(max_file_size_gb)")
+        println(io, "package_max_pkg_size_gb: $(max_pkg_size_gb)")
     end
 
     # Create runner script
     write_runner_script(repoloc)
     
-    # check size of replication packge on dropbox and decide what to do
-    r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)
-    size_gb = dbox_get_folder_size(joinpath(r.file_request_path_full, "replication-package"))
-
-    @info "package has $size_gb GB."
-
     println("Where to preprocess this?")
     local_remote = RadioMenu(["local","gh-runner"])
     if request(local_remote) == 1 # local
@@ -160,6 +66,15 @@ function preprocess2(paperID; which_round = nothing)
             res = chomp(read(run(Cmd(cmd)),String))
         end
         @info "✓ Preprocess complete for paper $paperID round $round"
+        # * commit all except data
+        branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
+
+        cmd = """
+        git add .
+        git commit -m '🚀 prechecks round $(round)'
+        git push origin $branch
+        """
+        @show gr = read(Cmd(`sh -c $cmd`, dir=repoloc),String)
 
     else
         # runner
@@ -167,7 +82,7 @@ function preprocess2(paperID; which_round = nothing)
         branch = "round$(round)"
         cmd = """
         git add _variables.yml runner_precheck.jl
-        git commit -m '🎯 Trigger precheck for round $(round)'
+        git commit -m '[trigger remote] for round $(round) 🎯 '
         git push origin $branch
         """
         run(Cmd(`sh -c $cmd`, dir=repoloc))
@@ -178,7 +93,8 @@ function preprocess2(paperID; which_round = nothing)
     cd(o) # go back
 
     # * Delete local repo
-    rm(repoloc, recursive = true, force = true)
+    run(`chmod -R u+rwX $repoloc`)
+    rm(repoloc, recursive=true, force=true)
 end
 
 
@@ -292,24 +208,36 @@ function write_runner_script(repoloc::String)
             rethrow(e)
         end
         
-        # Unzip files
-        @info "Unzipping files in \$dest_path"
-        try
-            zips = PackageScanner.read_and_unzip_directory(dest_path)
-            @info "Unzipped \$(length(zips)) file(s)"
-        catch e
-            @warn "Unzip had issues (may be okay)" exception=e
+        # Unzip files depending on size
+        pkg_size = vars["package_size_gb"]
+        max_pkg_size = vars["package_max_pkg_size_gb"]
+        max_file_size = vars["package_max_file_size_gb"]
+        if pkg_size > max_pkg_size
+            @info "package is larger than \$(max_pkg_size) GB. Go into partial extraction mode"
+            pkg_dir, manifest = prepare_package_for_precheck(dest_path, size_threshold_gb = max_file_size, interactive = false)
+            @info "Running precheck on \$pkg_dir"
+
+            precheck_package(pkg_dir, pre_manifest=manifest)
+        else
+            @info "Unzipping files in \$dest_path"
+            try
+                zips = PackageScanner.read_and_unzip_directory(dest_path)
+                @info "Unzipped \$(length(zips)) file(s)"
+            catch e
+                @warn "Unzip had issues (may be okay)" exception=e
+            end
+
+            # Run precheck
+            @info "Running precheck on \$dest_path"
+            try
+                PackageScanner.precheck_package(dest_path)
+                @info "✓ Precheck complete"
+            catch e
+                @error "Precheck failed" exception=e
+                rethrow(e)
+            end
         end
-        
-        # Run precheck
-        @info "Running precheck on \$dest_path"
-        try
-            PackageScanner.precheck_package(dest_path)
-            @info "✓ Precheck complete"
-        catch e
-            @error "Precheck failed" exception=e
-            rethrow(e)
-        end
+
         """)
     end
     @info "Created runner_precheck.jl at $repoloc"

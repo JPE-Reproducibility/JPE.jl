@@ -683,22 +683,7 @@ function finalize_publication(paperID,doi)
     
     insert_package_doi!(paperID,doi)
 
-    # get file list and md5 hashes from dv
-    dv_meta = dv_get_dataset_metadata(doi)
-
-    # get location of local repo
-    paper = db_filter_paper(paperID)
-    if nrow(paper) != 1
-        error("Paper ID $paperID not found or has multiple entries")
-    end
-    
-    r = NamedTuple(paper[1, :])
-    localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
-    package_path = joinpath(localloc, "replication-package")
-
-    file_checks = dv_check_replication_package(dv_meta,package_path)
-
-    dv_check_report(file_checks)
+    dv_get_file_report(paperID)
 
     println("log paper as accepted in database?")
     yes_no_menu = RadioMenu(["yes","no"])  # Default is first option 
@@ -718,6 +703,9 @@ function finalize_publication(paperID,doi)
         # exit without updating database.
     end
 end
+
+
+
 
 function delete_dropbox_paper(paperID; round = nothing, dryrun = true)
     paper = db_filter_paper(paperID)
@@ -1069,6 +1057,11 @@ end
 function insert_package_doi!(paper_id,doi)
     p = db_filter_paper(paper_id)
     db_update_cell("papers","paper_id = $paper_id","doi","$doi")
+end
+
+function get_package_doi(paper_id)
+    p = db_filter_paper(paper_id)
+    p[1,:doi]
 end
 
 
