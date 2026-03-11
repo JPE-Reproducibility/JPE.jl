@@ -411,9 +411,78 @@ function assign_replicators(paperID, selection)
         return (primary=primary_email, secondary=secondary_email)
     end
     
+    # Display the Dropbox password so the DE can share it with the replicator
+    # via Slack (the link itself travels in the assignment email; password is
+    # the second factor and must come through a separate channel).
+    _show_dropbox_password_for_assignment(paperID, current_round, primary_email)
+
     println("✅ Successfully assigned paper $(paperID) to replicators")
     println()
     return (primary=primary_email, secondary=secondary_email)
+end
+
+
+function _show_dropbox_password_for_assignment(paperID, round, primary_email)
+    iter = db_filter_iteration(paperID, round)
+    if nrow(iter) == 0
+        return
+    end
+    password = iter[1, :dropbox_password]
+    if ismissing(password) || isnothing(password)
+        return
+    end
+
+    println()
+    println("="^70)
+    println("DROPBOX PASSWORD — share with replicator via Slack DM")
+    println("  Paper:     $paperID  Round $round")
+    println("  Replicator: $primary_email")
+    println()
+    println("  Password:  $password")
+    println()
+    println("Suggested Slack message:")
+    println("────────────────────────────────────────")
+    p = db_filter_paper(paperID)
+    slug = nrow(p) > 0 ? p[1, :paper_slug] : paperID
+    println("Hi! Password for $slug R$round: $password")
+    println("Use this to download from the Dropbox link in your assignment email.")
+    println("────────────────────────────────────────")
+    println()
+    println("Press Enter when sent...")
+    println("="^70)
+    readline()
+end
+
+
+"""
+    get_dropbox_password(paperID, round)
+
+Retrieve and display the Dropbox password stored for a paper/round.
+Useful if the replicator loses the password after initial assignment.
+"""
+function get_dropbox_password(paperID, round)
+    iter = db_filter_iteration(paperID, round)
+    if nrow(iter) == 0
+        error("No iteration found for $paperID R$round")
+    end
+    password = iter[1, :dropbox_password]
+    if ismissing(password) || isnothing(password)
+        error("No password stored for $paperID R$round — was preprocess2() run after the schema migration?")
+    end
+
+    p = db_filter_paper(paperID)
+    slug = nrow(p) > 0 ? p[1, :paper_slug] : paperID
+
+    println()
+    println("Password for $paperID R$round: $password")
+    println()
+    println("Suggested Slack message:")
+    println("────────────────────────────────────────")
+    println("Password for $slug R$round: $password")
+    println("Use with the Dropbox link from your assignment email.")
+    println("────────────────────────────────────────")
+
+    return password
 end
 
 """
