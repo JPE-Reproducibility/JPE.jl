@@ -111,6 +111,36 @@ function dbox_ensure_downloaded(filepath)
     end
 end
 
+function dbox_create_password_link(path, password, token)
+    try
+        py"create_password_protected_link"(path, password, token)
+    catch e1
+        try
+            @error "$e1"
+            @info "refreshing dropbox token"
+            dbox_set_token()
+            py"create_password_protected_link"(path, password, token)
+        catch e2
+            throw(e2)
+        end
+    end
+end
+
+function dbox_revoke_link(url, token)
+    try
+        py"revoke_shared_link"(url, token)
+    catch e1
+        try
+            @error "$e1"
+            @info "refreshing dropbox token"
+            dbox_set_token()
+            py"revoke_shared_link"(url, token)
+        catch e2
+            throw(e2)
+        end
+    end
+end
+
 function dbox_get_folder_size(path)
     api_path = startswith(path, "/") ? path : "/" * path
     token = dbox_token

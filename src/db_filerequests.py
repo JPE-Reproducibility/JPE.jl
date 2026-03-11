@@ -337,8 +337,61 @@ def monitor_viable_file_requests(access_token, only_open=True, delete=False):
         print(f"❌ Error: {e}")
         return []
 
+def create_password_protected_link(path, password, token):
+    """
+    Create a password-protected shared link for a Dropbox path.
+
+    Args:
+        path: Dropbox path (e.g., "/JPE/Surname-12345678/1/replication-package")
+        password: Password to protect the link
+        token: Dropbox access token
+
+    Returns:
+        dict: {'url': str, 'id': str, 'path': str}
+    """
+    dbx = dropbox.Dropbox(token)
+    from dropbox.sharing import SharedLinkSettings, RequestedVisibility
+
+    settings = SharedLinkSettings(
+        requested_visibility=RequestedVisibility.password,
+        link_password=password
+    )
+
+    try:
+        link = dbx.sharing_create_shared_link_with_settings(path, settings)
+        return {
+            'url': link.url,
+            'id': link.url,
+            'path': link.path_lower
+        }
+    except dropbox.exceptions.ApiError as e:
+        if hasattr(e.error, 'is_shared_link_already_exists') and e.error.is_shared_link_already_exists():
+            existing_link = e.error.get_shared_link_already_exists().metadata
+            dbx.sharing_revoke_shared_link(existing_link.url)
+            link = dbx.sharing_create_shared_link_with_settings(path, settings)
+            return {
+                'url': link.url,
+                'id': link.url,
+                'path': link.path_lower
+            }
+        else:
+            raise
+
+
+def revoke_shared_link(url, token):
+    """
+    Revoke a Dropbox shared link.
+
+    Args:
+        url: The shared link URL to revoke
+        token: Dropbox access token
+    """
+    dbx = dropbox.Dropbox(token)
+    dbx.sharing_revoke_shared_link(url)
+
+
 # Usage examples:
-# 
+#
 # # Just monitor (default behavior)
 # viable_requests = monitor_viable_file_requests(access_token)
 # 
