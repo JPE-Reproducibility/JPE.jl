@@ -688,6 +688,7 @@ function db_get_table_schema(table::String)
             "file_request_url_paper" => Dict(:type => "VARCHAR", :constraints => ""),
             "github_url" => Dict(:type => "VARCHAR", :constraints => ""),
             "gh_org_repo" => Dict(:type => "VARCHAR", :constraints => ""),
+            "dropbox_password" => Dict(:type => "VARCHAR", :constraints => ""),
             "_primary_key" => Dict(:columns => ["paper_id", "round"])
         ),
         "reports" => Dict(
