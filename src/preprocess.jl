@@ -30,6 +30,29 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     size_gb = dbox_get_folder_size(joinpath(r.file_request_path_full, "replication-package"))
 
     @info "package has $size_gb GB."
+
+    println("To disregard extracting very large files from zip, we have a safeguard:")
+    println("max_file_size_gb is currently $(max_file_size_gb). Keep or change?")
+    max_size_prompt = RadioMenu(["keep","change"])
+    if request(max_size_prompt) == 2
+        println("new value for max_file_size_gb:")
+        max_file_size_gb = parse(Float64, readline())
+    end
+
+    println()
+    println("any paths to exclude from data scanning?")
+    scan_prompt = RadioMenu(["no - scan all","yes"])
+    if request(scan_prompt) == 2
+        println("give comma separated list of paths to exclude like")
+        println("/path/one, /path/two, /path/three [no quotes]")
+        no_data_scan = split(readline(), ",") .|> strip .|> String
+        append!(no_data_scan, ["__MACOSX","renv"])
+        @info "will no scan paths in $(no_data_scan)"
+    else
+        no_data_scan = ["__MACOSX","renv"]
+    end
+
+
     
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
@@ -47,8 +70,11 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         println(io, "package_max_pkg_size_gb: $(max_pkg_size_gb)")
     end
 
+    # add a run badge to the README and change title
+    update_readme(joinpath(repoloc,"README.md"), r.gh_org_repo, "# $(get_case_id(r.journal, r.paper_slug, r.round))")
+
     # Create runner script
-    write_runner_script(repoloc)
+    write_runner_script(repoloc, no_data_scan)
     
     println("Where to preprocess this?")
     local_remote = RadioMenu(["local","gh-runner"])
@@ -81,7 +107,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         # Commit both files
         branch = "round$(round)"
         cmd = """
-        git add _variables.yml runner_precheck.jl
+        git add _variables.yml runner_precheck.jl README.md
         git commit -m '[trigger remote] for round $(round) 🎯 '
         git push origin $branch
         """
@@ -98,13 +124,29 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
 end
 
 
+function update_readme(filepath::String, gh_org_repo::String, new_header::String)
+    lines = readlines(filepath)
+    
+    badge_url = "https://github.com/$gh_org_repo/actions/workflows/precheck.yml"
+    badge = "[![Run Precheck]($badge_url/badge.svg)]($badge_url)"
+    
+    # replace first line with new header, add blank line and badge
+    lines[1] = new_header
+    insert!(lines, 2, "")
+    insert!(lines, 3, badge)
+    
+    open(filepath, "w") do io
+        join(io, lines, "\n")
+    end
+end
+
 
 
 """
 Write the runner_precheck.jl script to the repository location.
 This script will be executed by the chosen runner.
 """
-function write_runner_script(repoloc::String)
+function write_runner_script(repoloc::String,no_data_scan::Vector{String})
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
         write(io, """
         using YAML
@@ -214,10 +256,10 @@ function write_runner_script(repoloc::String)
         max_file_size = vars["package_max_file_size_gb"]
         if pkg_size > max_pkg_size
             @info "package is larger than \$(max_pkg_size) GB. Go into partial extraction mode"
-            pkg_dir, manifest = prepare_package_for_precheck(dest_path, size_threshold_gb = max_file_size, interactive = false)
+            pkg_dir, manifest = PackageScanner.prepare_package_for_precheck(dest_path, size_threshold_gb = max_file_size, interactive = false)
             @info "Running precheck on \$pkg_dir"
 
-            precheck_package(pkg_dir, pre_manifest=manifest)
+            PackageScanner.precheck_package(pkg_dir, pre_manifest=manifest, no_data_scan = $(no_data_scan))
         else
             @info "Unzipping files in \$dest_path"
             try
@@ -230,7 +272,7 @@ function write_runner_script(repoloc::String)
             # Run precheck
             @info "Running precheck on \$dest_path"
             try
-                PackageScanner.precheck_package(dest_path)
+                PackageScanner.precheck_package(dest_path, no_data_scan = $(no_data_scan))
                 @info "✓ Precheck complete"
             catch e
                 @error "Precheck failed" exception=e
