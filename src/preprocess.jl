@@ -54,23 +54,19 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
 
 
     
-    # Generate a unique password for this paper + round and create a
-    # password-protected Dropbox shared link so the GitHub Actions runner
-    # can download the package via HTTP (avoids "Files On-Demand" stub issues).
-    password = randstring(['a':'z'; 'A':'Z'; '0':'9'], 16)
+    # Create a public Dropbox shared link for the runner (and replicators) to
+    # download the replication package via plain curl — no credentials needed.
+    #
+    # SECURITY UPGRADE PATH (dormant):
+    #   To switch to password-protected links (two-factor security), replace
+    #   dbox_link_at_path below with dbox_create_password_link, store the
+    #   returned password in the DB (iterations.dropbox_password), add the
+    #   dropbox_password_secret field to _variables.yml, and re-enable the
+    #   call to _show_dropbox_password_for_assignment in actions.jl.
+    #   See PROPOSAL.md for the full spec.
     dropbox_path = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "replication-package")
-    @info "Creating password-protected Dropbox link for $dropbox_path"
-    link_info = dbox_create_password_link(dropbox_path, password, dbox_token)
-    secret_name = "DROPBOX_PASSWORD_$(r.paper_id)_R$(round)"
-
-    # Store password in database for retrieval during replicator assignment
-    robust_db_operation() do con
-        DBInterface.execute(con, """
-            UPDATE iterations
-            SET dropbox_password = ?
-            WHERE paper_id = ? AND round = ?
-        """, [password, r.paper_id, round])
-    end
+    @info "Creating public Dropbox link for $dropbox_path"
+    link_url = dbox_link_at_path(dropbox_path, dbox_token)
 
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
@@ -81,30 +77,13 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         println(io, "paper_id: $(r.paper_id)")
         println(io, "journal: \"$(r.journal)\"")
         println(io, "paper_slug: \"$(r.paper_slug)\"")
-        # Remote download via password-protected link
-        println(io, "dropbox_download_url: \"$(replace(link_info["url"], r"www.dropbox.com" => "dl.dropboxusercontent.com"))?dl=1\"")
-        println(io, "dropbox_link_id: \"$(link_info["id"])\"")
-        println(io, "dropbox_password_secret: \"$secret_name\"")
+        println(io, "dropbox_download_url: \"$(replace(link_url, "dl=0" => "dl=1"))\"")
         # Local fallback path (for local preprocessing)
         println(io, "dropbox_rel_path: \"$(get_case_id(r.journal, r.paper_slug, r.round))\"")
         println(io, "package_size_gb: $(size_gb)")
         println(io, "package_max_file_size_gb: $(max_file_size_gb)")
         println(io, "package_max_pkg_size_gb: $(max_pkg_size_gb)")
     end
-
-    println()
-    println("="^70)
-    println("PASSWORD-PROTECTED DROPBOX LINK CREATED")
-    println("  Case:    $(get_case_id(r.journal, r.paper_slug, r.round, fpath=false))")
-    println("  Secret:  $secret_name")
-    println("  Password: $password")
-    println()
-    println("ACTION REQUIRED — add as GitHub secret (copy/paste):")
-    println("  gh secret set $secret_name --body \"$password\" --repo $(r.gh_org_repo)")
-    println()
-    println("Press Enter when done...")
-    println("="^70)
-    readline()
 
     # add a run badge to the README and change title
     update_readme(joinpath(repoloc,"README.md"), r.gh_org_repo, "# $(get_case_id(r.journal, r.paper_slug, r.round))")
@@ -183,10 +162,12 @@ Write the runner_precheck.jl script to the repository location.
 This script will be executed by the chosen runner (local or GitHub Actions).
 
 For remote execution the script downloads the replication package via a
-password-protected Dropbox shared link, which is reliabile regardless of
-macOS "Files On-Demand" stub status.  The password is injected as a GitHub
-Actions secret (ENV[secret_name]).  A local-copy fallback is retained for
-local preprocessing runs.
+plain curl call to a public Dropbox shared link stored in `_variables.yml`.
+A local-copy fallback is retained for local preprocessing runs.
+
+SECURITY UPGRADE PATH (dormant): to switch to password-protected download,
+re-enable the password block in this function and in preprocess2(). See
+PROPOSAL.md for the full spec.
 """
 function write_runner_script(repoloc::String, no_data_scan::Vector{String})
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
@@ -200,26 +181,23 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
 
         dest_path = joinpath(ENV["GITHUB_WORKSPACE"], "replication-package")
 
-        # ── Remote path: download via password-protected Dropbox link ─────────
-        url         = get(vars, "dropbox_download_url", nothing)
-        secret_name = get(vars, "dropbox_password_secret", nothing)
+        # ── Remote path: download via public Dropbox link ─────────────────────
+        url = get(vars, "dropbox_download_url", nothing)
 
         downloaded_ok = false
 
-        if !isnothing(url) && !isnothing(secret_name) && haskey(ENV, secret_name)
-            password = ENV[secret_name]
-            @info "Downloading package from password-protected Dropbox link..." url
-
+        if !isnothing(url)
+            @info "Downloading package from Dropbox link..." url
             t0 = time()
             try
-                run(`curl -fsSL -o package.zip \$url -u :\$password`)
+                run(`curl -fsSL -o package.zip \$url`)
                 @info "Download complete in \$(round(time()-t0, digits=1))s"
                 downloaded_ok = true
             catch e
                 @error "curl download failed, will try local fallback" exception=e
             end
         else
-            @info "No remote link configured (or secret not set) — using local Dropbox path"
+            @info "No remote link configured — using local Dropbox path"
         end
 
         # ── Local fallback: copy from Dropbox Apps folder ─────────────────────
@@ -283,9 +261,8 @@ end
 """
     revoke_preprocessing_link(paperID, round)
 
-Revoke the password-protected Dropbox shared link that was created during
-`preprocess2()`.  Call this after remote preprocessing finishes successfully
-to minimise the link's exposure window.
+Revoke the public Dropbox shared link that was created during `preprocess2()`.
+Call this after remote preprocessing finishes successfully to close the link.
 """
 function revoke_preprocessing_link(paperID, round)
     rt = db_filter_iteration(paperID, round)
@@ -311,22 +288,22 @@ function revoke_preprocessing_link(paperID, round)
         return
     end
 
-    # Parse only the one field we need to avoid a YAML.jl dependency in JPE.jl
-    link_id = nothing
+    # Parse the download URL from _variables.yml (strip ?dl=1 for revocation)
+    link_url = nothing
     for line in eachline(vars_path)
-        m = match(r"^dropbox_link_id:\s*\"?(.+?)\"?\s*$", line)
+        m = match(r"^dropbox_download_url:\s*\"?(.+?)\"?\s*$", line)
         if !isnothing(m)
-            link_id = m.captures[1]
+            link_url = replace(m.captures[1], r"\?dl=\d$" => "")
             break
         end
     end
 
-    if isnothing(link_id) || isempty(link_id)
-        @warn "No dropbox_link_id in _variables.yml for $paperID R$round"
+    if isnothing(link_url) || isempty(link_url)
+        @warn "No dropbox_download_url in _variables.yml for $paperID R$round"
         return
     end
 
     @info "Revoking Dropbox shared link for $paperID R$round..."
-    dbox_revoke_link(link_id, dbox_token)
+    dbox_revoke_link(link_url, dbox_token)
     @info "✓ Link revoked"
 end

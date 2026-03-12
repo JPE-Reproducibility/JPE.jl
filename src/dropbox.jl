@@ -111,6 +111,51 @@ function dbox_ensure_downloaded(filepath)
     end
 end
 
+function dbox_upload_text(path, text, token)
+    try
+        py"upload_text"(path, text, token)
+    catch e1
+        try
+            @error "$e1"
+            @info "refreshing dropbox token"
+            dbox_set_token()
+            py"upload_text"(path, text, token)
+        catch e2
+            throw(e2)
+        end
+    end
+end
+
+function dbox_download_via_password_link(url, password, token)
+    try
+        py"download_via_password_link"(url, password, token)
+    catch e1
+        try
+            @error "$e1"
+            @info "refreshing dropbox token"
+            dbox_set_token()
+            py"download_via_password_link"(url, password, token)
+        catch e2
+            throw(e2)
+        end
+    end
+end
+
+function dbox_delete_path(path, token)
+    try
+        py"delete_dropbox_path"(path, token)
+    catch e1
+        try
+            @error "$e1"
+            @info "refreshing dropbox token"
+            dbox_set_token()
+            py"delete_dropbox_path"(path, token)
+        catch e2
+            throw(e2)
+        end
+    end
+end
+
 function dbox_create_password_link(path, password, token)
     try
         py"create_password_protected_link"(path, password, token)

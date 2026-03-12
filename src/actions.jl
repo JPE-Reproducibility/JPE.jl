@@ -411,10 +411,11 @@ function assign_replicators(paperID, selection)
         return (primary=primary_email, secondary=secondary_email)
     end
     
-    # Display the Dropbox password so the DE can share it with the replicator
-    # via Slack (the link itself travels in the assignment email; password is
-    # the second factor and must come through a separate channel).
-    _show_dropbox_password_for_assignment(paperID, current_round, primary_email)
+    # SECURITY UPGRADE PATH (dormant):
+    #   If password-protected Dropbox links are enabled (see preprocess.jl and
+    #   PROPOSAL.md), uncomment the line below to display the password at
+    #   assignment time so the DE can share it with the replicator via Slack.
+    # _show_dropbox_password_for_assignment(paperID, current_round, primary_email)
 
     println("✅ Successfully assigned paper $(paperID) to replicators")
     println()

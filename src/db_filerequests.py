@@ -390,6 +390,30 @@ def revoke_shared_link(url, token):
     dbx.sharing_revoke_shared_link(url)
 
 
+def upload_text(path, text, token):
+    """Upload a UTF-8 string to a Dropbox path, overwriting if it exists. For testing only."""
+    from dropbox.files import WriteMode
+    dbx = dropbox.Dropbox(token)
+    dbx.files_upload(text.encode('utf-8'), path, mode=WriteMode.overwrite)
+
+
+def download_via_password_link(url, password, token):
+    """
+    Download file content from a password-protected Dropbox shared link.
+    Uses sharing_get_shared_link_file which accepts link_password directly.
+    Returns the file content as bytes.
+    """
+    dbx = dropbox.Dropbox(token)
+    metadata, response = dbx.sharing_get_shared_link_file(url=url, link_password=password)
+    return response.content
+
+
+def delete_dropbox_path(path, token):
+    """Delete a file or folder at a Dropbox path. For testing only."""
+    dbx = dropbox.Dropbox(token)
+    dbx.files_delete_v2(path)
+
+
 # Usage examples:
 #
 # # Just monitor (default behavior)
