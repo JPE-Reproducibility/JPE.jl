@@ -29,7 +29,13 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)
     size_gb = dbox_get_folder_size(joinpath(r.file_request_path_full, "replication-package"))
 
-    @info "package has $size_gb GB."
+    @info "package has $size_gb GB on dropbox."
+
+    if size_gb > max_pkg_size_gb
+        @info "Package exceeds max_pkg_size_gb ($max_pkg_size_gb GB). Showing file listing:"
+        pkg_path = joinpath(get_dbox_loc(r.journal, r.paper_slug, round, full = true), "replication-package")
+        browse_package_contents(pkg_path)
+    end
 
     println("To disregard extracting very large files from zip, we have a safeguard:")
     println("max_file_size_gb is currently $(max_file_size_gb). Keep or change?")
