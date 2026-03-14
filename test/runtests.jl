@@ -2,6 +2,7 @@ using JPE
 using Test
 using DataFrames
 using DuckDB
+using Dates
 
 # Test database configuration
 const TEST_DB_PATH = "/Users/floswald/JPE/jpe_test.duckdb"  # Separate test database
@@ -25,6 +26,7 @@ end
 @testset "JPE.jl" begin
     # Write your tests here.
 
-    include("test_duck.jl")
+    # include("test_duck.jl")
     include("test_dropbox.jl")
+    include("test_jpe_db.jl")
 end
