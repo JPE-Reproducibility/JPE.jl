@@ -80,6 +80,41 @@ function read_and_unzip_directory(dir_path::String; rm_zip = true)
     return filter(isfile, readdir(dir_path, join=true))
 end
 
+"""
+    browse_package_contents(path::String)
+
+Display the contents of a replication package (directory or zip archive) sorted
+by file size descending, with sizes in GB, paginated through `less`.
+
+- If `path` is a `.zip` file: runs `unzip -l | sort -k1 -rn | awk (→GB) | less`
+- If `path` is a directory containing exactly one `.zip`: same as above on that zip
+- Otherwise: runs `du -ak path | sort -rn | awk (→GB) | less` for a plain directory tree
+
+Intended to be called interactively when a package exceeds `max_pkg_size_gb`.
+"""
+function browse_package_contents(path::String)
+    # awk programs stored as raw strings to prevent Julia from interpolating $1, $2, etc.
+    # unzip -l columns: bytes  date  time  name  — convert bytes→GB for data lines only.
+    # Use sub() to strip the first three fields so the full path (including spaces) is preserved.
+    unzip_awk = raw"""/^[[:space:]]*[0-9]/ && NF>=4 {sz=$1; dt=$2; tm=$3; name=$0; sub(/^[[:space:]]*[0-9]+[[:space:]]+[0-9-]+[[:space:]]+[0-9:]+[[:space:]]+/,"",name); printf "%10.4f GB  %s %s   %s\n", sz/1073741824, dt, tm, name; next} {print}"""
+    # du -ak columns: KB  path — strip leading "KB<whitespace>" so the full path is preserved.
+    du_awk    = raw"""{sz=$1; sub(/^[0-9]+[[:space:]]+/,"",$0); printf "%10.4f GB\t%s\n", sz/1048576, $0}"""
+
+    if isfile(path) && endswith(lowercase(path), ".zip")
+        run(pipeline(`unzip -l $path`, `sort -k1 -rn`, `awk $unzip_awk`, `less`))
+    elseif isdir(path)
+        zips = filter(f -> isfile(f) && endswith(lowercase(f), ".zip"),
+                      readdir(path, join = true))
+        if length(zips) == 1
+            run(pipeline(`unzip -l $(zips[1])`, `sort -k1 -rn`, `awk $unzip_awk`, `less`))
+        else
+            run(pipeline(`du -ak $path`, `sort -rn`, `awk $du_awk`, `less`))
+        end
+    else
+        error("browse_package_contents: not a directory or .zip file: $path")
+    end
+end
+
 function rm_git(extract_dir)
     for (root, dirs, files) in walkdir(extract_dir)
         if ".git" in dirs

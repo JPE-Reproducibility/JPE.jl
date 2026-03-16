@@ -29,7 +29,13 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)
     size_gb = dbox_get_folder_size(joinpath(r.file_request_path_full, "replication-package"))
 
-    @info "package has $size_gb GB."
+    @info "package has $size_gb GB on dropbox."
+
+    if size_gb > max_pkg_size_gb
+        @info "Package exceeds max_pkg_size_gb ($max_pkg_size_gb GB). Showing file listing:"
+        pkg_path = joinpath(get_dbox_loc(r.journal, r.paper_slug, round, full = true), "replication-package")
+        browse_package_contents(pkg_path)
+    end
 
     println("To disregard extracting very large files from zip, we have a safeguard:")
     println("max_file_size_gb is currently $(max_file_size_gb). Keep or change?")
@@ -54,6 +60,20 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
 
 
     
+    # Create a public Dropbox shared link for the runner (and replicators) to
+    # download the replication package via plain curl — no credentials needed.
+    #
+    # SECURITY UPGRADE PATH (dormant):
+    #   To switch to password-protected links (two-factor security), replace
+    #   dbox_link_at_path below with dbox_create_password_link, store the
+    #   returned password in the DB (iterations.dropbox_password), add the
+    #   dropbox_password_secret field to _variables.yml, and re-enable the
+    #   call to _show_dropbox_password_for_assignment in actions.jl.
+    #   See PROPOSAL.md for the full spec.
+    dropbox_path = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "replication-package")
+    @info "Creating public Dropbox link for $dropbox_path"
+    link_url = dbox_link_at_path(dropbox_path, dbox_token)
+
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
         println(io, "title: \"$(r.title)\"")
@@ -63,7 +83,8 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         println(io, "paper_id: $(r.paper_id)")
         println(io, "journal: \"$(r.journal)\"")
         println(io, "paper_slug: \"$(r.paper_slug)\"")
-        # Store relative path that runner will use to construct full Dropbox path
+        println(io, "dropbox_download_url: \"$(replace(link_url, "dl=0" => "dl=1"))\"")
+        # Local fallback path (for local preprocessing)
         println(io, "dropbox_rel_path: \"$(get_case_id(r.journal, r.paper_slug, r.round))\"")
         println(io, "package_size_gb: $(size_gb)")
         println(io, "package_max_file_size_gb: $(max_file_size_gb)")
@@ -144,122 +165,87 @@ end
 
 """
 Write the runner_precheck.jl script to the repository location.
-This script will be executed by the chosen runner.
+This script will be executed by the chosen runner (local or GitHub Actions).
+
+For remote execution the script downloads the replication package via a
+plain curl call to a public Dropbox shared link stored in `_variables.yml`.
+A local-copy fallback is retained for local preprocessing runs.
+
+SECURITY UPGRADE PATH (dormant): to switch to password-protected download,
+re-enable the password block in this function and in preprocess2(). See
+PROPOSAL.md for the full spec.
 """
-function write_runner_script(repoloc::String,no_data_scan::Vector{String})
+function write_runner_script(repoloc::String, no_data_scan::Vector{String})
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
         write(io, """
         using YAML
         using PackageScanner
 
-        # Dropbox Files On-Demand helper - force download entire directory
-        function force_download_directory(dirpath)
-            @info "Forcing download of all files in directory (this triggers Dropbox sync)..." dirpath
-            
-            file_count = 0
-            download_count = 0
-            
-            for (root, dirs, files) in walkdir(dirpath)
-                for file in files
-                    filepath = joinpath(root, file)
-                    file_count += 1
-                    
-                    # Check if file is a stub (appears as 0 bytes)
-                    initial_size = filesize(filepath)
-                    
-                    # Force download by reading the entire file
-                    try
-                        # Reading the file will trigger Dropbox to download it
-                        open(filepath, "r") do io
-                            # Read in chunks to avoid memory issues with large files
-                            while !eof(io)
-                                read(io, min(1024*1024, bytesavailable(io)))
-                            end
-                        end
-                        
-                        # Check size after reading
-                        final_size = filesize(filepath)
-                        
-                        if initial_size == 0 && final_size > 0
-                            download_count += 1
-                            if download_count % 10 == 0
-                                @info "Downloaded \$download_count files so far..."
-                            end
-                        end
-                    catch e
-                        @warn "Could not read file" filepath exception=e
-                    end
-                end
-            end
-            
-            @info "Processed \$file_count files (\$download_count were downloaded from Dropbox)"
-            
-            # Verify directory now has content
-            size_output = chomp(read(`du -sh \$dirpath`, String))
-            @info "Final directory size: \$size_output"
-        end
-
         # Read configuration
         vars = YAML.load_file(joinpath(ENV["GITHUB_WORKSPACE"], "_variables.yml"))
-        
         @info "Configuration loaded" vars
-        
-        # Construct paths
-        
-        source_path = joinpath(ENV["JPE_DBOX_APPS"], vars["dropbox_rel_path"], "replication-package")
+
         dest_path = joinpath(ENV["GITHUB_WORKSPACE"], "replication-package")
-        
-        @info "Paths configured" GITHUB_WORKSPACE=ENV["GITHUB_WORKSPACE"] source_path dest_path
-        
-        # Check if source exists
-        @info "Checking source path exists..."
-        if !isdir(source_path)
-            error("✗ Package not found at \$source_path")
-        end
-        @info "✓ Source path exists"
-        
-        # Check initial size
-        initial_size = chomp(read(`du -sh \$source_path`, String))
-        @info "Initial package size (may be 0B if files are placeholders): \$initial_size"
-        
-        # Force download all files from Dropbox
-        @info "Ensuring all files are downloaded from Dropbox (this may take several minutes)..."
-        try
-            force_download_directory(source_path)
-        catch e
-            @error "Failed to download files" exception=e
-            rethrow(e)
-        end
-        
-        # Copy package
-        @info "Copying package to workspace..."
-        start_time = time()
-        
-        try
-            # Remove destination if it exists
-            if isdir(dest_path)
-                rm(dest_path; recursive=true, force=true)
+
+        # ── Remote path: download via public Dropbox link ─────────────────────
+        url = get(vars, "dropbox_download_url", nothing)
+
+        downloaded_ok = false
+
+        if !isnothing(url)
+            @info "Downloading package from Dropbox link..." url
+            t0 = time()
+            try
+                run(`curl -fsSL -o package.zip \$url`)
+                @info "Download complete in \$(round(time()-t0, digits=1))s"
+                downloaded_ok = true
+            catch e
+                @error "curl download failed, will try local fallback" exception=e
             end
-            @warn "using PackageScanner.mycp as workaround here"
-            PackageScanner.mycp(source_path, dest_path; recursive = true, force=true)
-            
-            elapsed = time() - start_time
-            @info "✓ Package copied successfully in \$(round(elapsed, digits=2)) seconds"
-        catch e
-            @error "Failed to copy package" exception=e
-            rethrow(e)
+        else
+            @info "No remote link configured — using local Dropbox path"
         end
-        
-        # Unzip files depending on size
-        pkg_size = vars["package_size_gb"]
+
+        # ── Local fallback: copy from Dropbox Apps folder ─────────────────────
+        if !downloaded_ok
+            source_path = joinpath(ENV["JPE_DBOX_APPS"], vars["dropbox_rel_path"], "replication-package")
+            @info "Copying package from local Dropbox..." source_path
+            if !isdir(source_path)
+                error("Package not found at \$source_path")
+            end
+            isdir(dest_path) && rm(dest_path; recursive=true, force=true)
+            PackageScanner.mycp(source_path, dest_path; recursive=true, force=true)
+            @info "✓ Package copied from local Dropbox"
+        end
+
+        # ── Unzip downloaded archive (remote path only) ───────────────────────
+        if downloaded_ok && isfile("package.zip")
+            @info "Unzipping package.zip..."
+            try
+                run(`unzip -oq package.zip -d replication-package/`)
+                rm("package.zip")
+                @info "✓ Unzip complete"
+            catch e
+                @error "Unzip failed" exception=e
+                rethrow(e)
+            end
+        end
+
+        if !isdir(dest_path)
+            error("Package directory not found at \$dest_path after download/copy step")
+        end
+
+        # ── PackageScanner precheck ────────────────────────────────────────────
+        pkg_size     = vars["package_size_gb"]
         max_pkg_size = vars["package_max_pkg_size_gb"]
         max_file_size = vars["package_max_file_size_gb"]
-        if pkg_size > max_pkg_size
-            @info "package is larger than \$(max_pkg_size) GB. Go into partial extraction mode"
-            pkg_dir, manifest = PackageScanner.prepare_package_for_precheck(dest_path, size_threshold_gb = max_file_size, interactive = false)
-            @info "Running precheck on \$pkg_dir"
 
-            PackageScanner.precheck_package(pkg_dir, pre_manifest=manifest, no_data_scan = $(no_data_scan))
+        if pkg_size > max_pkg_size
+            @info "Package >\$(max_pkg_size) GB — using partial extraction mode"
+            pkg_dir, manifest = PackageScanner.prepare_package_for_precheck(
+                dest_path, size_threshold_gb=max_file_size, interactive=false)
+            PackageScanner.precheck_package(pkg_dir, pre_manifest=manifest,
+                                            no_data_scan=$(no_data_scan))
         else
             @info "Unzipping files in \$dest_path"
             try
@@ -268,19 +254,62 @@ function write_runner_script(repoloc::String,no_data_scan::Vector{String})
             catch e
                 @warn "Unzip had issues (may be okay)" exception=e
             end
-
-            # Run precheck
             @info "Running precheck on \$dest_path"
-            try
-                PackageScanner.precheck_package(dest_path, no_data_scan = $(no_data_scan))
-                @info "✓ Precheck complete"
-            catch e
-                @error "Precheck failed" exception=e
-                rethrow(e)
-            end
+            PackageScanner.precheck_package(dest_path, no_data_scan=$(no_data_scan))
+            @info "✓ Precheck complete"
         end
-
         """)
     end
     @info "Created runner_precheck.jl at $repoloc"
+end
+
+
+"""
+    revoke_preprocessing_link(paperID, round)
+
+Revoke the public Dropbox shared link that was created during `preprocess2()`.
+Call this after remote preprocessing finishes successfully to close the link.
+"""
+function revoke_preprocessing_link(paperID, round)
+    rt = db_filter_iteration(paperID, round)
+    if nrow(rt) != 1
+        error("No iteration found for $paperID round $round")
+    end
+    r = rt[1, :]
+
+    # Retrieve link id from the cloned repo's _variables.yml
+    # (we re-use the local temp clone path convention from preprocess2)
+    d = tempdir()
+    repoloc = joinpath(d, string(paperID, "-", round))
+
+    vars_path = joinpath(repoloc, "_variables.yml")
+    if !isfile(vars_path)
+        # Try to clone it fresh
+        gh_clone_branch(r.gh_org_repo, "round$(round)", to=repoloc)
+        vars_path = joinpath(repoloc, "_variables.yml")
+    end
+
+    if !isfile(vars_path)
+        @warn "Could not find _variables.yml — cannot revoke link automatically"
+        return
+    end
+
+    # Parse the download URL from _variables.yml (strip ?dl=1 for revocation)
+    link_url = nothing
+    for line in eachline(vars_path)
+        m = match(r"^dropbox_download_url:\s*\"?(.+?)\"?\s*$", line)
+        if !isnothing(m)
+            link_url = replace(m.captures[1], r"\?dl=\d$" => "")
+            break
+        end
+    end
+
+    if isnothing(link_url) || isempty(link_url)
+        @warn "No dropbox_download_url in _variables.yml for $paperID R$round"
+        return
+    end
+
+    @info "Revoking Dropbox shared link for $paperID R$round..."
+    dbox_revoke_link(link_url, dbox_token)
+    @info "✓ Link revoked"
 end

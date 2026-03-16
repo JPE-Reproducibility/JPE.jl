@@ -337,8 +337,85 @@ def monitor_viable_file_requests(access_token, only_open=True, delete=False):
         print(f"❌ Error: {e}")
         return []
 
+def create_password_protected_link(path, password, token):
+    """
+    Create a password-protected shared link for a Dropbox path.
+
+    Args:
+        path: Dropbox path (e.g., "/JPE/Surname-12345678/1/replication-package")
+        password: Password to protect the link
+        token: Dropbox access token
+
+    Returns:
+        dict: {'url': str, 'id': str, 'path': str}
+    """
+    dbx = dropbox.Dropbox(token)
+    from dropbox.sharing import SharedLinkSettings, RequestedVisibility
+
+    settings = SharedLinkSettings(
+        requested_visibility=RequestedVisibility.password,
+        link_password=password
+    )
+
+    try:
+        link = dbx.sharing_create_shared_link_with_settings(path, settings)
+        return {
+            'url': link.url,
+            'id': link.url,
+            'path': link.path_lower
+        }
+    except dropbox.exceptions.ApiError as e:
+        if hasattr(e.error, 'is_shared_link_already_exists') and e.error.is_shared_link_already_exists():
+            existing_link = e.error.get_shared_link_already_exists().metadata
+            dbx.sharing_revoke_shared_link(existing_link.url)
+            link = dbx.sharing_create_shared_link_with_settings(path, settings)
+            return {
+                'url': link.url,
+                'id': link.url,
+                'path': link.path_lower
+            }
+        else:
+            raise
+
+
+def revoke_shared_link(url, token):
+    """
+    Revoke a Dropbox shared link.
+
+    Args:
+        url: The shared link URL to revoke
+        token: Dropbox access token
+    """
+    dbx = dropbox.Dropbox(token)
+    dbx.sharing_revoke_shared_link(url)
+
+
+def upload_text(path, text, token):
+    """Upload a UTF-8 string to a Dropbox path, overwriting if it exists. For testing only."""
+    from dropbox.files import WriteMode
+    dbx = dropbox.Dropbox(token)
+    dbx.files_upload(text.encode('utf-8'), path, mode=WriteMode.overwrite)
+
+
+def download_via_password_link(url, password, token):
+    """
+    Download file content from a password-protected Dropbox shared link.
+    Uses sharing_get_shared_link_file which accepts link_password directly.
+    Returns the file content as bytes.
+    """
+    dbx = dropbox.Dropbox(token)
+    metadata, response = dbx.sharing_get_shared_link_file(url=url, link_password=password)
+    return response.content
+
+
+def delete_dropbox_path(path, token):
+    """Delete a file or folder at a Dropbox path. For testing only."""
+    dbx = dropbox.Dropbox(token)
+    dbx.files_delete_v2(path)
+
+
 # Usage examples:
-# 
+#
 # # Just monitor (default behavior)
 # viable_requests = monitor_viable_file_requests(access_token)
 # 
