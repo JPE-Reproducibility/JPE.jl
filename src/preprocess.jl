@@ -1,5 +1,5 @@
 
-function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_file_size_gb = 2)
+function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_file_size_gb = 2, run_checks = true)
         
     # get row from "iterations"
     p = db_filter_paper(paperID)
@@ -103,38 +103,46 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         runner_env = ENV["JULIA_RUNNER_ENV"]
         runner_script = joinpath(repoloc,"runner_precheck.jl")
 
-        
-        # in a new julia process
-        cmd = Cmd([
-            "julia", 
-            "--project=$runner_env", "$runner_script"
-        ])
-        withenv("SHELL" => "/opt/homebrew/bin/fish", "GITHUB_WORKSPACE" => "$repoloc") do
-            res = chomp(read(run(Cmd(cmd)),String))
+        if run_checks
+            # in a new julia process
+            cmd = Cmd([
+                "julia",
+                "--project=$runner_env", "$runner_script"
+            ])
+            withenv("SHELL" => "/opt/homebrew/bin/fish", "GITHUB_WORKSPACE" => "$repoloc") do
+                res = chomp(read(run(Cmd(cmd)),String))
+            end
+            @info "✓ Preprocess complete for paper $paperID round $round"
+        else
+            @info "run_checks=false — skipping local runner script"
         end
-        @info "✓ Preprocess complete for paper $paperID round $round"
-        # * commit all except data
-        branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
 
+        # commit all except data
+        branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
+        commit_msg = run_checks ? "🚀 prechecks round $(round)" : "📁 setup only (no checks) round $(round)"
         cmd = """
         git add .
-        git commit -m '🚀 prechecks round $(round)'
+        git commit -m '$commit_msg'
         git push origin $branch
         """
         @show gr = read(Cmd(`sh -c $cmd`, dir=repoloc),String)
 
     else
         # runner
-        # Commit both files
         branch = "round$(round)"
+        commit_msg = run_checks ? "[trigger remote] for round $(round) 🎯" : "📁 setup only (no remote trigger) round $(round)"
         cmd = """
         git add _variables.yml runner_precheck.jl README.md
-        git commit -m '[trigger remote] for round $(round) 🎯 '
+        git commit -m '$commit_msg'
         git push origin $branch
         """
         run(Cmd(`sh -c $cmd`, dir=repoloc))
-        
-        @info "Monitor workflow at: $(r.github_url)/actions"
+
+        if run_checks
+            @info "Monitor workflow at: $(r.github_url)/actions"
+        else
+            @info "run_checks=false — files pushed, no remote workflow triggered"
+        end
     end
 
     cd(o) # go back
