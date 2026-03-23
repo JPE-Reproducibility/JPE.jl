@@ -202,20 +202,20 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
         # ── Remote path: download via public Dropbox link ─────────────────────
         url = get(vars, "dropbox_download_url", nothing)
 
-        downloaded_ok = false
-
-        if !isnothing(url)
+        downloaded_ok = if !isnothing(url)
             @info "Downloading package from Dropbox link..." url
             t0 = time()
             try
                 run(`curl -fsSL -o package.zip \$url`)
                 @info "Download complete in \$(round(time()-t0, digits=1))s"
-                global downloaded_ok = true
+                true
             catch e
                 @error "curl download failed, will try local fallback" exception=e
+                false
             end
         else
             @info "No remote link configured — using local Dropbox path"
+            false
         end
 
         # ── Local fallback: copy from Dropbox Apps folder ─────────────────────
@@ -232,15 +232,39 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
 
         # ── Unzip downloaded archive (remote path only) ───────────────────────
         if downloaded_ok && isfile("package.zip")
-            @info "Unzipping package.zip..."
+            @info "Unzipping Dropbox folder archive..."
+            tmp_dir = mktempdir()
             try
-                run(`unzip -oq package.zip -d replication-package/`)
-                rm("package.zip")
-                @info "✓ Unzip complete"
+                run(`unzip -oq package.zip -d \$tmp_dir`)
             catch e
-                @error "Unzip failed" exception=e
-                rethrow(e)
+                @warn "unzip exited non-zero (may still be okay)" exception=e
             end
+            rm("package.zip"; force=true)
+
+            # Find all ZIPs inside the Dropbox folder
+            candidates = filter(readdir(tmp_dir; join=true)) do f
+                isfile(f) && endswith(lowercase(f), ".zip")
+            end
+
+            if isempty(candidates)
+                error("No ZIP file found inside Dropbox folder archive")
+            end
+
+            @info "Found \$(length(candidates)) ZIP(s) to extract" candidates
+            isdir(dest_path) && rm(dest_path; recursive=true, force=true)
+            mkpath(dest_path)
+
+            for pkg_zip in candidates
+                @info "Unzipping \$pkg_zip..."
+                try
+                    run(`unzip -oq \$pkg_zip -d \$dest_path`)
+                catch e
+                    @warn "unzip of \$pkg_zip exited non-zero" exception=e
+                end
+            end
+
+            rm(tmp_dir; recursive=true, force=true)
+            @info "✓ Unzip complete"
         end
 
         if !isdir(dest_path)
