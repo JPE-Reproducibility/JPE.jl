@@ -32,9 +32,13 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     @info "package has $size_gb GB on dropbox."
 
     if size_gb > max_pkg_size_gb
-        @info "Package exceeds max_pkg_size_gb ($max_pkg_size_gb GB). Showing file listing:"
-        pkg_path = joinpath(get_dbox_loc(r.journal, r.paper_slug, round, full = true), "replication-package")
-        browse_package_contents(pkg_path)
+        @info "Package exceeds max_pkg_size_gb ($max_pkg_size_gb GB)."
+        println(">>> Want to show file listing? needs to sync dropbox first...")
+        show_prompt = RadioMenu(["Yes","No"])
+        if request(show_prompt) == 1
+            pkg_path = joinpath(get_dbox_loc(r.journal, r.paper_slug, round, full = true), "replication-package")
+            browse_package_contents(pkg_path)
+        end
     end
 
     println("To disregard extracting very large files from zip, we have a safeguard:")
@@ -206,7 +210,7 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
             try
                 run(`curl -fsSL -o package.zip \$url`)
                 @info "Download complete in \$(round(time()-t0, digits=1))s"
-                downloaded_ok = true
+                global downloaded_ok = true
             catch e
                 @error "curl download failed, will try local fallback" exception=e
             end

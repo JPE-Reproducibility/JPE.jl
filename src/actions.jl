@@ -69,7 +69,13 @@ function dispatch()
         println("dispatch $cid ?")
         yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
         if request(yes_no_menu) == 1
-            preprocess2(r.paper_id)
+            println(">>> preprocess $cid ?")
+            yes_no_menup = RadioMenu(["Yes","No"])  # Default is first option 
+            if request(yes_no_menup) == 1
+                preprocess2(r.paper_id)
+            else
+                preprocess2(r.paper_id,run_checks = false)
+            end
             assign(r.paper_id)  # needs to prompt for which replicator
         else
             println("skipping $cid")
