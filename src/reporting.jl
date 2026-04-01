@@ -750,6 +750,15 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, 
     x = select(h_summary, :replicator, :quarter, :case_id => ByRow(x -> length(x)) => :num_jobs, :hours, :pay_EUR, :pay_USD)
     sort!(x,[:quarter,:replicator])
 
+    println()
+    println("budget report:")
+    b = combine(
+        groupby(x, :quarter),
+        :hours => sum => :hours, :num_jobs => sum => :num_jobs, :pay_EUR => sum => :cost_EUR, :pay_USD => sum => :cost_USD
+    )
+
+    pretty_table(b)
+
     if write_gs
         R"""
         id = $(gs_replicator_billing())
@@ -759,17 +768,16 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, 
             ss = id,
             sheet = "billing"
         )
+        df2 = $(b)
+        googlesheets4::write_sheet(
+            data = df2,
+            ss = id,
+            sheet = "quarterly-totals"
+        )
         """
 
     end
-    println()
-    println("budget report:")
-    b = combine(
-        groupby(x, :quarter),
-        :hours => sum => :hours, :num_jobs => sum => :num_jobs, :pay_EUR => sum => :cost_EUR, :pay_USD => sum => :cost_USD
-    )
 
-    pretty_table(b)
 
     h, h_summary
 end
