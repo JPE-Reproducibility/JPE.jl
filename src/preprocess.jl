@@ -163,14 +163,20 @@ function update_readme(filepath::String, gh_org_repo::String, new_header::String
     badge_url = "https://github.com/$gh_org_repo/actions/workflows/precheck.yml"
     badge = "[![Run Precheck]($badge_url/badge.svg)]($badge_url)"
     
-    # replace first line with new header, add blank line and badge
+    # replace first line with new header
     lines[1] = new_header
-    insert!(lines, 2, "")
-    insert!(lines, 3, badge)
+
+    # insert the badge and blank lines only if it's not there already.
+    if !(lines[3] == badge)
+        insert!(lines, 2, "")
+        insert!(lines, 3, badge)
+    end
     
+    # write out new readme.
     open(filepath, "w") do io
         join(io, lines, "\n")
     end
+
 end
 
 
