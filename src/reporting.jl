@@ -883,10 +883,10 @@ function ps()
     df = @chain p begin
         subset(:comments => ByRow(x -> (ismissing(x) | (x !=("[TEST]")))))
         groupby(:status)
-        combine(:paper_slug,:paper_id, :round)
-        select(:status => (x -> categorical(x, levels = db_statuses())) => :status,:paper_slug,:round, :paper_id)
+        combine(:paper_slug,:paper_id, :round, :is_confidential)
+        select(:status => (x -> categorical(x, levels = db_statuses())) => :status,:paper_slug,:round, :paper_id, :is_confidential)
         leftjoin(x, on = :paper_id)
-        select(Not(:paper_id))
+        select(:status, :paper_slug, :round, :days_in_status, :is_confidential)
         # sort( :days_in_status, rev = true)
     end
     sort!(df, [:status, :days_in_status], rev = [false,true])
@@ -912,6 +912,7 @@ function ps()
                     crayon = Crayon(background = :light_cyan))  
     )
     pretty_table(df, highlighters = highlighters, header = names(df))
+    return df
 
 end
 

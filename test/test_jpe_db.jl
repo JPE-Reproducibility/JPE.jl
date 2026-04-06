@@ -314,6 +314,39 @@ end
 
 end
 
+@testset "ps(): is_confidential column present and correct" begin
+
+    with_jpe_test_db(seed = false) do
+        today_str = string(Dates.today())
+        # Insert two papers: one confidential, one not — no [TEST] comment so ps() shows them.
+        JPE.robust_db_operation() do con
+            DBInterface.execute(con, """
+                INSERT INTO papers (
+                    paper_id, journal, paper_slug, status, round,
+                    is_confidential, share_confidential,
+                    first_arrival_date, date_with_authors
+                ) VALUES
+                    ('11111111', 'JPE', 'Alpha-11111111', 'with_replicator', 1, true,  false, '$today_str', '$today_str'),
+                    ('22222222', 'JPE', 'Beta-22222222',  'author_back_de',  1, false, false, '$today_str', '$today_str')
+            """)
+        end
+
+        df = JPE.ps()
+
+        @test hasproperty(df, :is_confidential)
+        @test nrow(df) == 2
+
+        conf_row = filter(r -> r.paper_slug == "Alpha-11111111", df)
+        @test nrow(conf_row) == 1
+        @test conf_row[1, :is_confidential] == true
+
+        open_row = filter(r -> r.paper_slug == "Beta-22222222", df)
+        @test nrow(open_row) == 1
+        @test open_row[1, :is_confidential] == false
+    end
+
+end
+
 @testset "with_jpe_test_db: display slack message works" begin
     with_jpe_test_db() do
         # Simulate what preprocess2() does: store a password in iterations.
