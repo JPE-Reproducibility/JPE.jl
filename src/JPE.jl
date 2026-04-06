@@ -71,12 +71,12 @@ function dbox_set_token()
 end
 
 # Global persistent database connection
-const JPE_DB = if haskey(ENV,"JPE_DB")
-    ENV["JPE_DB"] 
-else
-    error("env var JPE_DB must be set to location where you want your local duckdb - set the var and restart julia")
-end
-const DB_PATH = joinpath(JPE_DB,"jpe.duckdb")
+# These are Refs so they are set at __init__ time (runtime), NOT baked into the
+# precompile cache. Using const String values here caused DB_PATH to be frozen
+# to whatever JPE_DB was at precompile time, making the module fail when loaded
+# from cache in a different environment.
+const JPE_DB = Ref{String}("")
+const DB_PATH = Ref{String}("")
 
 const DB_LOCK = ReentrantLock()
 const DB_CONNECTION = Ref{Union{Nothing, Any}}(nothing)
@@ -111,6 +111,14 @@ end
 
 
 function __init__()
+    # Initialise runtime-dependent paths (must come first; these are Refs, not
+    # precompiled consts, so they are safe across different environments)
+    if !haskey(ENV, "JPE_DB")
+        error("env var JPE_DB must be set to location where you want your local duckdb - set the var and restart julia")
+    end
+    JPE_DB[] = ENV["JPE_DB"]
+    DB_PATH[] = joinpath(ENV["JPE_DB"], "jpe.duckdb")
+
     # include two python modules
     # 1. dropbox API
     @pyinclude(joinpath(@__DIR__,"db_filerequests.py"))

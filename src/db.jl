@@ -26,7 +26,7 @@ end
 function db_reconnect()
     lock(DB_LOCK) do
         if DB_CONNECTION[] === nothing
-            DB_CONNECTION[] = DBInterface.connect(DuckDB.DB, DB_PATH)
+            DB_CONNECTION[] = DBInterface.connect(DuckDB.DB, DB_PATH[])
             println("✓ Database connection re-established")
         else
             println("Connection already active")
@@ -51,8 +51,8 @@ function db_connection_status()
     end
 end
 
-db_write_backup(table,y) = CSV.write(joinpath(JPE_DB,"$table.csv"), y)
-db_read_backup(table) = CSV.read(joinpath(JPE_DB,"$table.csv"), DataFrame)
+db_write_backup(table,y) = CSV.write(joinpath(JPE_DB[],"$table.csv"), y)
+db_read_backup(table) = CSV.read(joinpath(JPE_DB[],"$table.csv"), DataFrame)
 
 function safe_csv_append(path::String, df::DataFrame)
     is_new_file = !isfile(path)
@@ -62,7 +62,7 @@ end
 function with_db(f::Function)
     lock(DB_LOCK) do
         if DB_CONNECTION[] === nothing || !isopen(DB_CONNECTION[])
-            DB_CONNECTION[] = DBInterface.connect(DuckDB.DB, DB_PATH)
+            DB_CONNECTION[] = DBInterface.connect(DuckDB.DB, DB_PATH[])
         end
         f(DB_CONNECTION[])
     end
@@ -1582,7 +1582,7 @@ function repair_db_from_backups()
     # Check if backups exist
     backup_tables = ["papers", "form_arrivals", "iterations", "reports"]
     for table in backup_tables
-        backup_path = joinpath(JPE_DB, "$table.csv")
+        backup_path = joinpath(JPE_DB[], "$table.csv")
         if isfile(backup_path)
             try
                 # Read the backup
