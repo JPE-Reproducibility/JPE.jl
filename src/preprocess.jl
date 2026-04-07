@@ -140,7 +140,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         branch = "round$(round)"
         commit_msg = run_checks ? "[trigger remote] for round $(round) 🎯" : "📁 setup only (no remote trigger) round $(round)"
         cmd = """
-        git add _variables.yml runner_precheck.jl README.md
+        git add .
         git commit -m '$commit_msg'
         git push origin $branch
         """
