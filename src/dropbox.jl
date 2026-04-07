@@ -5,15 +5,15 @@ dbox_arrivals() = joinpath(dropbox(), "package-arrivals")
 dbox_refresh_token() = py"refresh_token"()
 dbox_get_user(to) = py"get_user_info"(to)
 
-function dbox_link_at_path(path,dbox_token)
+function dbox_link_at_path(path, dbox_token; expiry::Union{Int,Nothing}=nothing)
     try
-        py"get_link_at_path"(path,dbox_token)
+        py"get_link_at_path"(path, dbox_token, expiry_days=expiry)
     catch e1
         try
             @error "$e1"
             @info "refreshing dropbox token"
             dbox_set_token()
-            py"get_link_at_path"(path,dbox_token)
+            py"get_link_at_path"(path, dbox_token, expiry_days=expiry)
         catch e2
             throw(e2)
         end

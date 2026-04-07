@@ -3,7 +3,7 @@ from dropbox import Dropbox
 from dropbox.file_requests import CreateFileRequestArgs
 from dropbox.sharing import RequestedVisibility, SharedLinkSettings
 from dropbox.files import FileMetadata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import os
 import requests
@@ -31,22 +31,25 @@ def get_user_info(token):
         return dbx.users_get_current_account()
 
 
-def get_link_at_path(path,token):
+def get_link_at_path(path, token, expiry_days=None):
     "get a shareable link for local path /Apps/JPE-packages/path"
 
     dbx = Dropbox(token)
 
+    expires = datetime.now(timezone.utc) + timedelta(days=expiry_days) if expiry_days is not None else None
+
     try:
         # Create settings with 'public' visibility (default for shared links)
         settings = SharedLinkSettings(
-            requested_visibility=RequestedVisibility.public
+            requested_visibility=RequestedVisibility.public,
+            expires=expires
         )
-    
+
         # Attempt to create a new shared link
         link = dbx.sharing_create_shared_link_with_settings(path, settings)
         print("Public shared link:", link.url)
         return link.url
-    
+
     except dropbox.exceptions.ApiError as e:
         # If a link already exists, list existing links instead
         if isinstance(e.error, dropbox.sharing.CreateSharedLinkWithSettingsError) and e.error.is_shared_link_already_exists():
