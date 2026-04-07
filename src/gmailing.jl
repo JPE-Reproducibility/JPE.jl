@@ -46,7 +46,7 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
             <td>$(caseID)</td>
         </tr>
         <tr>
-            <td width="20%">Full Package Download Link</td>
+            <td width="20%">Full Package Download Link. Expires in 10 days!</td>
             <td>$(download_url)</td>
         </tr>
         <tr>
@@ -83,7 +83,7 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
             <td>$(caseID)</td>
         </tr>
         <tr>
-            <td width="20%">Full Package Download Link</td>
+            <td width="20%">Full Package Download Link. Expires in 10 days!</td>
             <td>$(download_url)</td>
         </tr>
         <tr>
@@ -118,7 +118,7 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
 
         <h2>Deadline ⏰</h2>
 
-        As usual, we aim for your report to arrive within the next 10 days, i.e. by $(deadline).
+        As usual, we aim for your report to arrive within the next 10 days, i.e. by $(deadline). Notice the dropbox link expires by that date.
 
 
         <h2>Warning ⚠️</h2>

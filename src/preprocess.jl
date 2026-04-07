@@ -71,12 +71,12 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     #   To switch to password-protected links (two-factor security), replace
     #   dbox_link_at_path below with dbox_create_password_link, store the
     #   returned password in the DB (iterations.dropbox_password), add the
-    #   dropbox_password_secret field to _variables.yml, and re-enable the
+    #   dropbox_password_secret field to _variables.yml, and re-enable the 
     #   call to _show_dropbox_password_for_assignment in actions.jl.
     #   See PROPOSAL.md for the full spec.
     dropbox_path = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "replication-package")
     @info "Creating public Dropbox link for $dropbox_path"
-    link_url = dbox_link_at_path(dropbox_path, dbox_token)
+    link_url = dbox_link_at_path(dropbox_path, dbox_token, expiry = 10)
 
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
