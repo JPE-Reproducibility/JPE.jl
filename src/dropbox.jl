@@ -226,3 +226,21 @@ function dbox_get_folder_size(path)
     
     return round(total_size / 1024^3,digits = 2)  # GB
 end
+
+function dbox_list_shared_links()
+    token = dbox_token
+    resp = HTTP.post(
+        "https://api.dropboxapi.com/2/sharing/list_shared_links",
+        ["Authorization" => "Bearer $token",
+         "Content-Type" => "application/json"],
+        "{}"
+    )
+    data = JSON.parse(String(resp.body))
+    for link in data["links"]
+        println(link["url"])
+        println("  path: ", get(link, "path_lower", "N/A"))
+        println("  expires: ", get(link, "expires", "never"))
+        println()
+    end
+    return data["links"]
+end

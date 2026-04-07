@@ -87,7 +87,6 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         println(io, "paper_id: $(r.paper_id)")
         println(io, "journal: \"$(r.journal)\"")
         println(io, "paper_slug: \"$(r.paper_slug)\"")
-        println(io, "dropbox_download_url: \"$(replace(link_url, "dl=0" => "dl=1"))\"")
         # Local fallback path (for local preprocessing)
         println(io, "dropbox_rel_path: \"$(get_case_id(r.journal, r.paper_slug, r.round))\"")
         println(io, "package_size_gb: $(size_gb)")
@@ -113,7 +112,9 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
                 "julia",
                 "--project=$runner_env", "$runner_script"
             ])
-            withenv("SHELL" => "/opt/homebrew/bin/fish", "GITHUB_WORKSPACE" => "$repoloc") do
+            withenv("SHELL" => "/opt/homebrew/bin/fish", 
+                    "GITHUB_WORKSPACE" => "$repoloc",
+                    "DROPBOX_DOWNLOAD_URL" => replace(link_url, "dl=0" => "dl=1")) do
                 res = chomp(read(run(Cmd(cmd)),String))
             end
             @info "✓ Preprocess complete for paper $paperID round $round"
@@ -133,6 +134,9 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
 
     else
         # runner
+        # set secret on the repo before pushing
+        run(`gh secret set DROPBOX_DOWNLOAD_URL --body $(replace(link_url, "dl=0" => "dl=1")) --repo $(r.gh_org_repo)`)
+    
         branch = "round$(round)"
         commit_msg = run_checks ? "[trigger remote] for round $(round) 🎯" : "📁 setup only (no remote trigger) round $(round)"
         cmd = """
@@ -206,10 +210,10 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
         dest_path = joinpath(ENV["GITHUB_WORKSPACE"], "replication-package")
 
         # ── Remote path: download via public Dropbox link ─────────────────────
-        url = get(vars, "dropbox_download_url", nothing)
+        url = get(ENV, "DROPBOX_DOWNLOAD_URL", nothing)
 
         downloaded_ok = if !isnothing(url)
-            @info "Downloading package from Dropbox link..." url
+            @info "Downloading package from secret Dropbox link..."
             t0 = time()
             try
                 run(`curl -fsSL -o package.zip \$url`)
@@ -264,6 +268,9 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
                 @info "Unzipping \$pkg_zip..."
                 try
                     run(`unzip -oq \$pkg_zip -d \$dest_path`)
+                    if isdir(\$dest_path)
+                        rm_git(\$dest_path)
+                    end
                 catch e
                     @warn "unzip of \$pkg_zip exited non-zero" exception=e
                 end
