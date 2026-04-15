@@ -1,5 +1,46 @@
 
 
+const GH_EXPECTED_USER = "jpedataeditor"
+
+"""
+    gh_check_auth()
+
+Verify that the `gh` CLI is authenticated as `$GH_EXPECTED_USER`.
+Issues a `@warn` if a different account is active (wrong account means all
+GitHub operations go to the wrong org). Called automatically from `__init__`.
+"""
+function gh_check_auth()
+    try
+        login = chomp(read(`gh api user --jq '.login'`, String))
+        if login != GH_EXPECTED_USER
+            @warn "gh CLI is authenticated as '$login', expected '$GH_EXPECTED_USER'. GitHub operations may go to the wrong account."
+        else
+            @info "gh auth ok: $login"
+        end
+    catch e
+        @warn "Could not verify gh CLI authentication: $e"
+    end
+end
+
+"""
+    gh_get_default_branch(gh_org_repo::String) -> String
+
+Return the current default branch of `gh_org_repo` (format `"owner/repo"`).
+"""
+function gh_get_default_branch(gh_org_repo::String)::String
+    chomp(read(`gh api repos/$gh_org_repo --jq '.default_branch'`, String))
+end
+
+"""
+    gh_set_default_branch(gh_org_repo::String, branch::String)
+
+Set the default branch of `gh_org_repo` (format `"owner/repo"`) to `branch`.
+Returns `true` on success, `false` on failure (via `gh_silent_run`).
+"""
+function gh_set_default_branch(gh_org_repo::String, branch::String)
+    gh_silent_run(`gh api -X PATCH repos/$gh_org_repo -f default_branch=$branch`)
+end
+
 gh_delete_repo(url) = run(`gh repo delete $url --yes`)
 gh_create_repo(gh_org_repo) = run(`gh repo create $(gh_org_repo) --public --template JPE-Reproducibility/JPEtemplate`)
 

@@ -76,7 +76,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     #   See PROPOSAL.md for the full spec.
     dropbox_path = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "replication-package")
     @info "Creating public Dropbox link for $dropbox_path"
-    link_url = dbox_link_at_path(dropbox_path, dbox_token, expiry = 10)
+    link_url = dbox_link_at_path(dropbox_path, dbox_token, expiry = 15)
 
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
@@ -99,6 +99,17 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
 
     # Create runner script
     write_runner_script(repoloc, no_data_scan)
+
+    # git branches
+    branch = gh_get_default_branch(r.gh_org_repo)
+
+    println(">>> Update the Default branch from $branch to round$(r.round)?")
+    updb = RadioMenu(["yes","no"])
+    if request(updb) == 1 # yes
+        gh_set_default_branch(r.gh_org_repo, "round$(r.round)")
+    else
+        println("default branch left at $branch")
+    end
     
     println("Where to preprocess this?")
     local_remote = RadioMenu(["local","gh-runner"])
@@ -137,7 +148,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         # set secret on the repo before pushing
         run(`gh secret set DROPBOX_DOWNLOAD_URL --body $(replace(link_url, "dl=0" => "dl=1")) --repo $(r.gh_org_repo)`)
     
-        branch = "round$(round)"
+        branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
         commit_msg = run_checks ? "[trigger remote] for round $(round) 🎯" : "📁 setup only (no remote trigger) round $(round)"
         cmd = """
         git add .
@@ -268,8 +279,8 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
                 @info "Unzipping \$pkg_zip..."
                 try
                     run(`unzip -oq \$pkg_zip -d \$dest_path`)
-                    if isdir(\$dest_path)
-                        rm_git(\$dest_path)
+                    if isdir(dest_path)
+                        rm_git(dest_path)
                     end
                 catch e
                     @warn "unzip of \$pkg_zip exited non-zero" exception=e

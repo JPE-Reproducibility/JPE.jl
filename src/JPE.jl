@@ -127,6 +127,9 @@ function __init__()
     # 2. gmail API
     @pyinclude(joinpath(@__DIR__,"gmail_client.py"))
 
+    # verify gh CLI is authenticated as the JPE account
+    gh_check_auth()
+
     
 
     if haskey(ENV,"JPE_TEST")
