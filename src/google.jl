@@ -261,7 +261,12 @@ function google_arrivals()
             
             # Update status to "with_author" (was "new_arrival")
             r.status = "with_author"
-            
+        end
+        
+        println("add to database and set to processed in arrivals?")
+        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
+        if request(yes_no_menu) == 1
+
             # Add row to papers table using db_append_new_row with the original DataFrame for type information
             db_append_new_row("papers", "paper_id", r)
             
@@ -272,7 +277,7 @@ function google_arrivals()
             
             db_update_cell("form_arrivals", "paper_id = $(r.paper_id)", "processed", true)
         else
-            println("paper not processed")
+            println("paper not added to datatbase.")
         end
     end
 

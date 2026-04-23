@@ -108,7 +108,7 @@ function dv_check_report(nt::NamedTuple)
         if answer == 1
             # nothing
         elseif answer == 2
-            pretty_table(select(DataFrame(nt.matched), :dv_name, :local_name), header = [:dv_name, :local_name])
+            pretty_table(select(DataFrame(nt.matched), :dv_name, :local_path), header = [:dv_name, :local_path])
         elseif answer == 3
             pretty_table(select(DataFrame(nt.hash_match_name_mismatch), :dv_name, :local_name), header = [:dv_name, :local_name])
         elseif answer == 4

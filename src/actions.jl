@@ -755,11 +755,13 @@ contained in the dataset on dataverse
 # Returns
 - The updated paper information
 """
-function finalize_publication(paperID,doi)
+function finalize_publication(paperID,doi; check_files = true)
     
     insert_package_doi!(paperID,doi)
 
-    dv_get_file_report(paperID)
+    if check_files
+        dv_get_file_report(paperID)
+    end
 
     println("log paper as accepted in database?")
     yes_no_menu = RadioMenu(["yes","no"])  # Default is first option 
