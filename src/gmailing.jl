@@ -523,6 +523,49 @@ function gmail_s3_request(name,paperID,title,email1,attachment;email2 = nothing,
 end
 
 
+function gmail_deletion_reminder(first, email, caseID, slug, paperID)
+    subject = "Please delete the $caseID package from your system"
+    body = gmail_deletion_reminder_body(first, caseID, slug, paperID)
+    gmail_send(
+        [author_email(email)],
+        subject,
+        body,
+        []
+    )
+end
+
+function gmail_deletion_reminder_body(first, caseID, slug, paperID)
+    doi = db_get_doi(paperID)
+    dv_url = "https://dataverse.harvard.edu/dataset.xhtml?persistentId=$doi"
+    m1 = """
+    Dear $first,
+    <br>
+    <br>
+    I am writing to let you know that I have accepted the package <b>$caseID</b> ($slug) into the dataverse of the Journal of Political Economy. 🎉
+    You can find the published package here, check it out: <a href="$dv_url">$dv_url</a>
+    <br>
+    <br>
+    As a result, your work on this package is fully complete. Under the terms of your confidentiality agreement with the University of Chicago Press, you are required to <b>permanently delete all copies of the replication package from your systems immediately</b>. This includes:
+    <br>
+    <ul>
+    <li>The replication package files (data, code, and any other materials)</li>
+    <li>Any local copies on your computer, external drives, or remote servers (including Nuvolos and other systems)</li>
+    <li>Any cloud storage copies (Dropbox, Google Drive, OneDrive, Onyxia etc.)</li>
+    </ul>
+    
+    Please confirm deletion by replying to this email with a brief acknowledgement. Thank you for your diligence in handling confidential materials.
+    <br>
+    <br>
+    Many thanks again for your excellent work on this replication check!
+    <br>
+    <br>
+    Best wishes,<br>
+    Florian
+    """
+    string(m1, signature())
+end
+
+
 function gmail_s3_request_body(first,paperID,title)
     @debug first paperID title
 

@@ -756,7 +756,13 @@ contained in the dataset on dataverse
 - The updated paper information
 """
 function finalize_publication(paperID,doi; check_files = true)
-    
+
+    paper = db_filter_paper(paperID)
+    if nrow(paper) == 1 && paper[1, :status] == "published_package"
+        @warn "Paper $paperID is already logged as published (status = 'published_package'). Nothing to do."
+        return
+    end
+
     insert_package_doi!(paperID,doi)
 
     if check_files
@@ -764,7 +770,7 @@ function finalize_publication(paperID,doi; check_files = true)
     end
 
     println("log paper as accepted in database?")
-    yes_no_menu = RadioMenu(["yes","no"])  # Default is first option 
+    yes_no_menu = RadioMenu(["yes","no"])  # Default is first option
 
     answer = request(yes_no_menu)
     if answer == 1
@@ -774,11 +780,66 @@ function finalize_publication(paperID,doi; check_files = true)
             DBInterface.execute(con, """
             UPDATE papers
             SET date_published = ?
-            WHERE paper_id = ? 
+            WHERE paper_id = ?
             """, (today(), paperID))
         end
     else
         # exit without updating database.
+        return
+    end
+
+    # --- post-publication cleanup ---
+
+    paper = db_filter_paper(paperID)
+    r = NamedTuple(paper[1, :])
+
+    # 1. Offer to delete the Dropbox package
+    println("\nDelete replication package from Dropbox?")
+    dbox_menu = RadioMenu(["Yes — dryrun first", "Yes — delete now", "No"])
+    dbox_answer = request(dbox_menu)
+
+    if dbox_answer == 1
+        delete_dropbox_paper(paperID; dryrun=true)
+        println("\nProceed with real delete?")
+        confirm_menu = RadioMenu(["Yes", "No"])
+        if request(confirm_menu) == 1
+            delete_dropbox_paper(paperID; dryrun=false)
+            @info "Dropbox package deleted for $paperID"
+        else
+            @info "Dropbox deletion skipped"
+        end
+    elseif dbox_answer == 2
+        delete_dropbox_paper(paperID; dryrun=false)
+        @info "Dropbox package deleted for $paperID"
+    else
+        @info "Dropbox deletion skipped"
+    end
+
+    # 2. Send deletion reminder to replicator(s) of the last round
+    println("\nSend data-deletion reminder to replicator(s)?")
+    email_menu = RadioMenu(["Yes", "No"])
+    if request(email_menu) == 1
+        iter = db_filter_iteration(paperID, r.round)
+        if nrow(iter) == 0
+            @warn "No iteration found for $paperID round $(r.round) — skipping deletion reminder"
+        else
+            it = iter[1, :]
+            slug = r.paper_slug
+            cid = case_id(r.journal, r.surname_of_author, paperID, r.round)
+            replicators_db = read_replicators()
+
+            for (email_col,) in [(:replicator1,), (:replicator2,)]
+                email = it[email_col]
+                ismissing(email) && continue
+                # look up first name from replicator list; fall back to email prefix
+                name_row = filter(rr -> rr.email == email, eachrow(replicators_db))
+                first_name = isempty(name_row) ? split(email, "@")[1] : first(name_row).name
+                gmail_deletion_reminder(first_name, email, cid, slug, paperID)
+                @info "Deletion reminder sent to $email"
+            end
+        end
+    else
+        @info "Deletion reminder skipped"
     end
 end
 
@@ -811,6 +872,7 @@ function delete_location( locallocs::Array ;dryrun = true)
     
     # Delete files first
     for l in locallocs
+        !isdir(l) && (@warn "path not found, skipping: $l"; continue)
         for (root, dirs, files) in walkdir(l)
             prs = filter(d -> any(x -> occursin(x, d), NO_DELETE), dirs)
             if length(prs) > 0
@@ -831,6 +893,7 @@ function delete_location( locallocs::Array ;dryrun = true)
     
     # Remove empty directories (bottom-up)
     for l in locallocs
+        !isdir(l) && continue
         for (root, dirs, files) in walkdir(l; topdown=false)  # bottom-up
             # Skip preserved directories
             any(x -> occursin(x, root), NO_DELETE) && continue

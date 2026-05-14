@@ -349,7 +349,7 @@ function validate_paper_status(paperID)
         end
     elseif r.status == "published_package"
         # Should have date_published set
-        if ismissing(iter.date_published)
+        if ismissing(r.date_published)
             push!(issues, "Status is 'published_package' but date_published is not set")
         end
     else
@@ -410,7 +410,7 @@ function repair_paper_status(paperID)
     # Determine correct status based on iteration data
     new_status = nothing
     
-    if !ismissing(iter.date_published)
+    if !ismissing(r.date_published)
         new_status = "published_package"
     elseif !ismissing(iter.date_decision_de) && iter.decision_de == "accept"
         new_status = "acceptable_package"
