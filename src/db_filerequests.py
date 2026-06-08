@@ -58,9 +58,9 @@ def get_link_at_path(path, token, expiry_days=None):
                 print("Existing public shared link:", links.links[0].url)
                 return links.links[0].url
             else:
-                print("A shared link exists, but we couldn't retrieve it.")
+                raise RuntimeError(f"A shared link exists for {path} but could not be retrieved.")
         else:
-            print("Error creating shared link:", e)
+            raise RuntimeError(f"Dropbox API error creating shared link for {path}: {e}")
 
 def create_file_request(token, title: str, destination_path: str):
     """

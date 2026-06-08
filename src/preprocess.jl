@@ -77,6 +77,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     dropbox_path = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "replication-package")
     @info "Creating public Dropbox link for $dropbox_path"
     link_url = dbox_link_at_path(dropbox_path, dbox_token, expiry = 15)
+    isnothing(link_url) && error("dbox_link_at_path returned nothing for $dropbox_path — check Dropbox credentials and path")
 
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
