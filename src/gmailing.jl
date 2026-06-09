@@ -524,7 +524,7 @@ end
 
 
 function gmail_deletion_reminder(first, email, caseID, slug, paperID)
-    subject = "Please delete the $caseID package from your system"
+    subject = "Please delete the $slug package from your system"
     body = gmail_deletion_reminder_body(first, caseID, slug, paperID)
     gmail_send(
         [author_email(email)],
@@ -545,7 +545,7 @@ function gmail_deletion_reminder_body(first, caseID, slug, paperID)
     You can find the published package here, check it out: <a href="$dv_url">$dv_url</a>
     <br>
     <br>
-    As a result, your work on this package is fully complete. Under the terms of your confidentiality agreement with the University of Chicago Press, you are required to <b>permanently delete all copies of the replication package from your systems immediately</b>. This includes:
+    As a result, your work on this package is fully complete. Under the terms of your confidentiality agreement with the University of Chicago Press, you are required to <b>permanently delete all versions of the replication package from your systems immediately</b>. This includes:
     <br>
     <ul>
     <li>The replication package files (data, code, and any other materials)</li>

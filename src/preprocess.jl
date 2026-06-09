@@ -77,6 +77,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     dropbox_path = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "replication-package")
     @info "Creating public Dropbox link for $dropbox_path"
     link_url = dbox_link_at_path(dropbox_path, dbox_token, expiry = 15)
+    isempty(link_url) && error("dbox_link_at_path returned empty URL for $dropbox_path — check Dropbox token and path")
 
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
@@ -214,6 +215,18 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
         using YAML
         using PackageScanner
 
+        function rm_git(extract_dir)
+            for (root, dirs, files) in walkdir(extract_dir)
+                if ".git" in dirs
+                    git_path = joinpath(root, ".git")
+                    @info "Removing git repository: \$git_path"
+                    rm(git_path, recursive=true, force=true)
+                    filter!(d -> d != ".git", dirs)
+                    return 0
+                end
+            end
+        end
+
         # Read configuration
         vars = YAML.load_file(joinpath(ENV["GITHUB_WORKSPACE"], "_variables.yml"))
         @info "Configuration loaded" vars
@@ -221,7 +234,9 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
         dest_path = joinpath(ENV["GITHUB_WORKSPACE"], "replication-package")
 
         # ── Remote path: download via public Dropbox link ─────────────────────
-        url = get(ENV, "DROPBOX_DOWNLOAD_URL", nothing)
+        url = let u = get(ENV, "DROPBOX_DOWNLOAD_URL", nothing)
+            (isnothing(u) || isempty(u)) ? nothing : u
+        end
 
         downloaded_ok = if !isnothing(url)
             @info "Downloading package from secret Dropbox link..."

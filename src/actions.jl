@@ -705,8 +705,21 @@ function de_make_decision(paperID, decision)
             WHERE paper_id = ? AND round = ?
             """, (today(), paperID, r.round))
 
-            if ismissing(r.data_statement) && r.round > 1
-                db_update_paper_iterations_info(con, r.paper_id,r.round-1)
+            if r.round > 1
+                if ismissing(r.data_statement)
+                    db_update_paper_iterations_info(con, r.paper_id, r.round-1)
+                end
+                # Copy replicators from previous round if current round has none assigned
+                # (happens when paper is accepted directly from author_back_de without dispatch)
+                DBInterface.execute(con, """
+                UPDATE iterations AS cur
+                SET replicator1 = prev.replicator1,
+                    replicator2 = prev.replicator2
+                FROM (SELECT replicator1, replicator2 FROM iterations
+                      WHERE paper_id = ? AND round = ?) AS prev
+                WHERE cur.paper_id = ? AND cur.round = ?
+                  AND cur.replicator1 IS NULL
+                """, (paperID, r.round-1, paperID, r.round))
             end
             
             # Send acceptance email to author

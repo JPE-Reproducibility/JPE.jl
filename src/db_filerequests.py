@@ -50,17 +50,35 @@ def get_link_at_path(path, token, expiry_days=None):
         print("Public shared link:", link.url)
         return link.url
 
-    except dropbox.exceptions.ApiError as e:
-        # If a link already exists, list existing links instead
-        if isinstance(e.error, dropbox.sharing.CreateSharedLinkWithSettingsError) and e.error.is_shared_link_already_exists():
+    except (dropbox.exceptions.ApiError, Exception) as e:
+        # If a link already exists, return it.
+        # Two cases:
+        #   1. ApiError with is_shared_link_already_exists() — normal SDK path
+        #   2. stone ValidationError("shared_link_already_exists: missing '.tag' key") —
+        #      SDK deserialization bug on some API versions; detect by message string.
+        is_already_exists = (
+            (isinstance(e, dropbox.exceptions.ApiError)
+             and isinstance(e.error, dropbox.sharing.CreateSharedLinkWithSettingsError)
+             and e.error.is_shared_link_already_exists())
+            or "shared_link_already_exists" in str(e)
+        )
+        if is_already_exists:
+            # Try to extract URL directly from the error metadata (no extra API call)
+            try:
+                existing = e.error.get_shared_link_already_exists().metadata
+                if existing is not None:
+                    print("Existing shared link (from error metadata):", existing.url)
+                    return existing.url
+            except Exception:
+                pass
+            # Fall back to listing shared links for this path
             links = dbx.sharing_list_shared_links(path=path, direct_only=True)
             if links.links:
-                print("Existing public shared link:", links.links[0].url)
+                print("Existing shared link (from list):", links.links[0].url)
                 return links.links[0].url
-            else:
-                print("A shared link exists, but we couldn't retrieve it.")
+            raise RuntimeError(f"Shared link already exists for {path} but could not retrieve its URL.")
         else:
-            print("Error creating shared link:", e)
+            raise
 
 def create_file_request(token, title: str, destination_path: str):
     """
