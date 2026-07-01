@@ -161,10 +161,10 @@ function gmail_send_invoice(first,email,invoicetable,capped,rate,EUR2USD,invoice
         <br>
         $(table_html)
         <br>
-        Please let me know if there is anything wrong with that. You can bill $(sum(invoicetable.hours)) hours during this quarter at a rate of $(rate) Euros per hour (i.e. $(rateUSD) USD per hour). I am using today's exchange rate found on wise.com of 1 EUR = $(round(EUR2USD,digits = 2)) USD.
-        <br>    
+        Please let me know if there is anything wrong with that. You can bill $(Float64(sum(invoicetable.hours))) hours during this quarter at a rate of $(rate) Euros per hour (i.e. $(rateUSD) USD per hour). I am using today's exchange rate found on wise.com of 1 EUR = $(round(EUR2USD,digits = 2)) USD.
         <br>
-        You should now fill in your invoice number: $invoice and the amount in USD: $(round(sum(invoicetable.hours) * rateUSD, digits = 1)).
+        <br>
+        You should now fill in your invoice number: $invoice and the amount in USD: $(round(Float64(sum(invoicetable.hours)) * rateUSD, digits = 1)).
         <br>    
         <br>
         Thanks so much for your help with this project!

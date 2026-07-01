@@ -400,3 +400,75 @@ function db_bk_fetch_latest()
     end
 
 end
+
+"""
+    restore_deleted_paper(paper_id; tables=["papers","iterations","reports","form_arrivals"])
+
+Restore a paper that was accidentally deleted from the live database, by pulling its row(s)
+back out of the `{table}_pre_delete.csv` snapshots written to `JPE_DB` before a delete
+operation. Only inserts into a table if `paper_id` is currently absent from it — safe to
+re-run, and will never overwrite or duplicate an existing row.
+
+Always takes a full timestamped backup (`db_bk_create()`) before writing anything, and uses
+`INSERT ... BY NAME` so column order/schema drift between the CSV snapshot and the live
+table doesn't matter.
+
+Returns a DataFrame log of what was restored, skipped, or missing.
+
+# Example
+```julia
+restore_deleted_paper("20251543")
+```
+"""
+function restore_deleted_paper(paper_id;
+        tables::Vector{String}=["papers", "iterations", "reports", "form_arrivals"])
+
+    paper_id = string(paper_id)
+    db_bk_create()  # safety net: timestamped copy of jpe.duckdb + csvs before any write
+
+    results = DataFrame(table = String[], action = String[], rows = Int[], detail = String[])
+
+    for table in tables
+        csv_path = joinpath(JPE_DB[], "$(table)_pre_delete.csv")
+        if !isfile(csv_path)
+            push!(results, (table, "skip", 0, "no $(basename(csv_path)) found"))
+            continue
+        end
+
+        backup_df = CSV.read(csv_path, DataFrame; types = Dict(:paper_id => String))
+        sub = filter(:paper_id => ==(paper_id), backup_df)
+
+        if nrow(sub) == 0
+            push!(results, (table, "skip", 0, "paper_id not found in $(basename(csv_path))"))
+            continue
+        end
+
+        n_live = with_db() do con
+            DataFrame(DBInterface.execute(con,
+                "SELECT COUNT(*) AS n FROM $table WHERE paper_id = ?", (paper_id,)))[1, :n]
+        end
+
+        if n_live > 0
+            push!(results, (table, "skip", n_live, "paper_id already present in live $table"))
+            continue
+        end
+
+        # columns that are entirely `missing` infer eltype Union{}, which
+        # DuckDB.register_data_frame cannot map to a logical type; force them
+        # to a nullable String column instead (the live column's real type
+        # wins on insert since every value is NULL anyway)
+        for col in names(sub)
+            if all(ismissing, sub[!, col])
+                sub[!, col] = Vector{Union{Missing,String}}(missing, nrow(sub))
+            end
+        end
+
+        robust_db_operation() do con
+            DuckDB.register_data_frame(con, sub, "restore_tmp")
+            DBInterface.execute(con, "INSERT INTO $table BY NAME SELECT * FROM restore_tmp")
+        end
+        push!(results, (table, "restored", nrow(sub), "inserted from $(basename(csv_path))"))
+    end
+
+    return results
+end

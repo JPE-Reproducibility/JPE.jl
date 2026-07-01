@@ -680,14 +680,12 @@ function replicator_hours_worked()
 end
 
 # TODO use github username as unique identifier because emails change over time.
-"gets list of hours worked and multiplies with hourly rate"
-function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, write_gs = false, EUR2USD = 1.1765, email_repl_subset = nothing)
-
+"hours worked by replicator/quarter, with [TEST] entries capped at test_max_hours; shared by replicator_billing() and quarterly_budget_table() so they never diverge"
+function _replicator_hours_summary(; test_max_hours = 1.5, rate = 25.0, EUR2USD = 1.1765)
     rateUSD = rate * EUR2USD
     h = replicator_hours_worked()
 
-
-    # for test case, pay max 2 hours
+    # for test case, pay max test_max_hours
     h.hours .= ifelse.((.!ismissing.(h.comments)) .& (h.comments .== "[TEST]"), min.(h.hours,test_max_hours), h.hours)
 
     disallowmissing!(h,:date_completed_repl)
@@ -702,6 +700,14 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, 
 
     h_summary.pay_EUR = h_summary.hours .* rate
     h_summary.pay_USD = h_summary.hours .* rateUSD
+
+    h, h_summary
+end
+
+function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, write_gs = false, EUR2USD = 1.1765, email_repl_subset = nothing)
+
+    rateUSD = rate * EUR2USD
+    h, h_summary = _replicator_hours_summary(; test_max_hours, rate, EUR2USD)
 
     # sending emails
     replicators_df = read_replicators()
@@ -780,6 +786,21 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, 
 
 
     h, h_summary
+end
+
+function quarterly_budget_table(; test_max_hours = 1.5, rate = 25.0, EUR2USD = 1.1765)
+    h, h_summary = _replicator_hours_summary(; test_max_hours, rate, EUR2USD)
+    x = select(h_summary, :replicator, :quarter,
+               :case_id => ByRow(x -> length(x)) => :num_jobs,
+               :hours, :pay_EUR, :pay_USD)
+    sort!(x, [:quarter, :replicator])
+    b = combine(groupby(x, :quarter),
+        :hours => sum => :hours,
+        :num_jobs => sum => :num_jobs,
+        :pay_EUR => sum => :cost_EUR,
+        :pay_USD => sum => :cost_USD)
+    pretty_table(b)
+    b
 end
 
 function replicator_next_invoice(df, email)
@@ -987,22 +1008,22 @@ end
 function wrap_text(text, width=60)
     str = string(text)
     lines = String[]
-    
+
     while length(str) > width
-        # Try to break at a space first
-        break_pos = findlast(' ', str[1:width])
-        
+        # safe byte index of character at position width
+        cut = nextind(str, 0, width)
+        prefix = str[1:cut]
+        break_pos = findlast(' ', prefix)
+
         if break_pos !== nothing
-            # Break at space (no hyphen needed)
-            push!(lines, str[1:break_pos-1])
-            str = lstrip(str[break_pos+1:end])
+            push!(lines, str[1:prevind(str, break_pos)])
+            str = lstrip(str[nextind(str, break_pos):end])
         else
-            # No space found, break the word and add hyphen
-            push!(lines, str[1:width] * "-")
-            str = str[width+1:end]
+            push!(lines, prefix * "-")
+            str = str[nextind(str, cut):end]
         end
     end
-    
+
     push!(lines, str)
     return join(lines, "\n")
 end
