@@ -72,14 +72,14 @@ function gs4_write_replicator_load(d::DataFrame)
     """
 end
 
-function available_replicators(; update = false)
+function replicator_availability(; update = false)
     d = gs4_get_replicators()
     @chain d begin
         subset("can take +1 package" => ByRow(==("Yes")), skipmissing = true)
         select(:email,"current_workload")
     end
 end
-ar(; update = false) = available_replicators(; update = update)
+ar(; update = false) = replicator_availability(; update = update)
 
 
 
