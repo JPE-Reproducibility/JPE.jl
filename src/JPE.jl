@@ -138,9 +138,6 @@ function __init__()
 
     show_logo()
 
-    ps()
-    println()
-    
     @info "Module loaded ok"
 
 end

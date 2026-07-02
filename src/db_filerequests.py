@@ -228,7 +228,11 @@ def cleanup_file_requests(access_token, request_ids_to_delete):
             # Get request info first
             request_info = dbx.file_requests_get(request_id)
             print(f"🗑️  Deleting file request: '{request_info.title}' (ID: {request_id})")
-            
+
+            # Dropbox refuses to delete an open file request; close it first.
+            if request_info.is_open:
+                dbx.file_requests_update(request_id, open=False)
+
             # Delete the file request - pass as list
             dbx.file_requests_delete([request_id])
             print(f"✅ Successfully deleted file request")
