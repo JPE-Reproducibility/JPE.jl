@@ -20,20 +20,50 @@ function dbox_link_at_path(path, dbox_token; expiry::Union{Int,Nothing}=nothing)
     end
 end
 
-function dbox_create_file_request(dest,title,token)
+function dbox_create_file_request(dest,title,token; deadline_days::Union{Int,Nothing}=nothing)
     try
-        py"create_file_request"(token,title,dest)
+        py"create_file_request"(token,title,dest,deadline_days=deadline_days)
     catch e1
         try
             @error "$e1"
             @info "refreshing dropbox token"
             dbox_set_token()
-            py"create_file_request"(token,title,dest)
+            py"create_file_request"(token,title,dest,deadline_days=deadline_days)
         catch e2
             throw(e2)
         end
     end
 
+end
+
+function dbox_update_fr_deadline(id, token, deadline_days::Int)
+    try
+        py"update_file_request_deadline"(token,id,deadline_days)
+    catch e1
+        try
+            @error "$e1"
+            @info "refreshing dropbox token"
+            dbox_set_token()
+            py"update_file_request_deadline"(token,id,deadline_days)
+        catch e2
+            throw(e2)
+        end
+    end
+end
+
+function dbox_delete_file_request(id, token)
+    try
+        py"cleanup_file_requests"(token,[id])
+    catch e1
+        try
+            @error "$e1"
+            @info "refreshing dropbox token"
+            dbox_set_token()
+            py"cleanup_file_requests"(token,[id])
+        catch e2
+            throw(e2)
+        end
+    end
 end
 
 function dbox_check_fr_pkg(journal,paperid,author,round)

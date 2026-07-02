@@ -144,6 +144,75 @@ end
 
 
 
+function gmail_remote_replication(author_first,author_email1,rep_first,rep_email1,caseID,download_url,repo_url,upload_url; author_first2 = nothing,author_email2 = nothing,rep_first2 = nothing,rep_email2 = nothing,draft = true)
+
+    author_names = isnothing(author_first2) ? author_first : string(author_first," and ",author_first2)
+    rep_names = isnothing(rep_first2) ? rep_first : string(rep_first," and ",rep_first2)
+
+    to = [author_email(author_email1)]
+    isnothing(author_email2) || push!(to, author_email(author_email2))
+    push!(to, author_email(rep_email1))
+    isnothing(rep_email2) || push!(to, author_email(rep_email2))
+
+    body = gmail_remote_replication_body(author_names,rep_names,caseID,download_url,repo_url,upload_url)
+    subject = "Remote Replication Instructions for $caseID"
+
+    if draft
+        gmail_draft(to,subject,body,[])
+    else
+        gmail_send(to,subject,body,[])
+    end
+end
+
+function gmail_remote_replication_body(author_names,rep_names,caseID,download_url,repo_url,upload_url)
+    """
+    Dear $author_names and $rep_names,
+    <br>
+    <br>
+    Since the confidential data for $caseID cannot be shared physically with the Data Editor, we will perform a <b>remote replication</b>: the replicator will connect to the author's machine via screen sharing (zoom, webex, teams or similar) and reproduce the results there, without ever taking possession of the data. Please read the full protocol here before we schedule this: <a href="https://jpedataeditor.github.io/remote-protocol.html">https://jpedataeditor.github.io/remote-protocol.html</a>.
+
+    <br>
+    <br>
+
+    <table border="1" cellpadding="4" cellspacing="0" width="100%">
+    <tr>
+        <td width="20%">Case ID</td>
+        <td>$(caseID)</td>
+    </tr>
+    <tr>
+        <td width="20%">Author(s)</td>
+        <td>$(author_names)</td>
+    </tr>
+    <tr>
+        <td width="20%">Replicator(s)</td>
+        <td>$(rep_names)</td>
+    </tr>
+    <tr>
+        <td width="20%">Replication package (JPE-Dropbox)</td>
+        <td>$(download_url)</td>
+    </tr>
+    <tr>
+        <td width="20%">git repo</td>
+        <td>$(repo_url)</td>
+    </tr>
+    <tr>
+        <td width="20%">Upload results here (JPE-upload-link)</td>
+        <td>$(upload_url)</td>
+    </tr>
+    </table>
+
+    <br>
+    <br>
+
+    Please don't hesitate to reach out with any questions. If all is clear to you, please start by proposing some suitable time slots in response to this email.
+    <br>
+    <br>
+    Best wishes,<br>
+    Florian
+    """ * signature()
+end
+
+
 function gmail_send_invoice(first,email,invoicetable,capped,rate,EUR2USD,invoice; send = true)
     rateUSD = round(rate * EUR2USD,digits = 2)
     subject = "Your JPE Invoice details"

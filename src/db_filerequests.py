@@ -81,7 +81,7 @@ def get_link_at_path(path, token, expiry_days=None):
         else:
             raise RuntimeError(f"Dropbox API error creating shared link for {path}: {e}")
 
-def create_file_request(token, title: str, destination_path: str):
+def create_file_request(token, title: str, destination_path: str, deadline_days=None):
     """
     Creates a file request in Dropbox.
 
@@ -89,18 +89,60 @@ def create_file_request(token, title: str, destination_path: str):
         token.
         title (str): The title of the file request (visible to users).
         destination_path (str): The Dropbox folder path where uploaded files will be stored.
+        deadline_days (int, optional): if given, sets a deadline that many days from now.
 
     Returns:
         the file request objects.
     """
+    from dropbox.file_requests import FileRequestDeadline
+
     dbx = Dropbox(token)
+
+    deadline = None
+    if deadline_days is not None:
+        deadline = FileRequestDeadline(
+            deadline=datetime.now(timezone.utc) + timedelta(days=deadline_days),
+            allow_late_uploads=None
+        )
 
     try:
         # Create the file request
         result = dbx.file_requests_create(
             title=title,
-            destination=destination_path
+            destination=destination_path,
+            deadline=deadline
         )
+        return {'url': result.url, 'id': result.id}
+    except dropbox.exceptions.ApiError as e:
+        print(f"Dropbox API error: {e}")
+        return None
+
+
+def update_file_request_deadline(token, request_id: str, deadline_days):
+    """
+    Reset the deadline on an existing file request, in place (no new id/url).
+
+    Args:
+        token.
+        request_id (str): id of the existing file request.
+        deadline_days (int): new deadline, that many days from now.
+
+    Returns:
+        the updated file request object (dict with 'url', 'id').
+    """
+    from dropbox.file_requests import FileRequestDeadline, UpdateFileRequestDeadline
+
+    dbx = Dropbox(token)
+
+    new_deadline = UpdateFileRequestDeadline.update(
+        FileRequestDeadline(
+            deadline=datetime.now(timezone.utc) + timedelta(days=deadline_days),
+            allow_late_uploads=None
+        )
+    )
+
+    try:
+        result = dbx.file_requests_update(request_id, deadline=new_deadline)
         return {'url': result.url, 'id': result.id}
     except dropbox.exceptions.ApiError as e:
         print(f"Dropbox API error: {e}")

@@ -503,6 +503,80 @@ function assign(paperID)
     return assign_replicators(paperID, selection)
 end
 
+"""
+    dispatch_remote_replication(paperID; deadline_days::Int = 20)
+
+For a paper undergoing remote replication: look up the current round's replicator(s)
+from `iterations`, (re)create a Dropbox upload link for their results in the paper's
+current-round folder, reset the expiration on both that upload link and the package
+download link to `deadline_days` from now, and draft the instructions email
+(`gmail_remote_replication`).
+
+The upload link is persisted to `iterations.replicator_upload_id/_url` so repeat calls
+reset the same link's deadline in place instead of spawning a new one each time.
+"""
+function dispatch_remote_replication(paperID; deadline_days::Int = 20)
+    paper = db_filter_paper(paperID)
+    nrow(paper) == 1 || error("Paper ID $paperID not found or has multiple entries")
+    r = NamedTuple(paper[1, :])
+
+    iter_df = db_filter_iteration(paperID, r.round)
+    nrow(iter_df) == 1 || error("No iteration found for $paperID round $(r.round)")
+    iter = NamedTuple(iter_df[1, :])
+
+    ismissing(iter.replicator1) && error("No replicator assigned yet for $paperID round $(r.round)")
+
+    reps = read_replicators()
+    rep_name(email) = begin
+        row = filter(rr -> rr.email == email, eachrow(reps))
+        isempty(row) ? split(email, "@")[1] : first(row).name
+    end
+
+    rep1_email = iter.replicator1
+    rep1_name = rep_name(rep1_email)
+    rep2_email = ismissing(iter.replicator2) ? nothing : iter.replicator2
+    rep2_name = isnothing(rep2_email) ? nothing : rep_name(rep2_email)
+
+    caseID = case_id(r.journal, r.surname_of_author, paperID, r.round)
+
+    # --- upload link: create once, reset deadline in place on repeat dispatches ---
+    upload_id, upload_url = if ismissing(iter.replicator_upload_id)
+        dest = joinpath(get_dbox_loc(r.journal, r.paper_slug, r.round), "replicator-upload")
+        fr = dbox_create_file_request(dest, "$caseID results upload", dbox_token; deadline_days = deadline_days)
+        isnothing(fr) && error("Failed to create upload file request for $paperID")
+        fr["id"], fr["url"]
+    else
+        dbox_update_fr_deadline(iter.replicator_upload_id, dbox_token, deadline_days)
+        iter.replicator_upload_id, iter.replicator_upload_url
+    end
+
+    # --- download link: revoke + recreate to reset expiry (shared links have no update-in-place) ---
+    old_download_url = dbox_link_at_path(iter.file_request_path, dbox_token)
+    dbox_revoke_link(old_download_url, dbox_token)
+    download_url = dbox_link_at_path(iter.file_request_path, dbox_token; expiry = deadline_days)
+
+    robust_db_operation() do con
+        DBInterface.execute(con, """
+        UPDATE iterations
+        SET replicator_upload_id = ?, replicator_upload_url = ?
+        WHERE paper_id = ? AND round = ?
+        """, (upload_id, upload_url, paperID, r.round))
+    end
+
+    gmail_remote_replication(
+        r.firstname_of_author, r.email_of_author,
+        rep1_name, rep1_email,
+        caseID, download_url, iter.github_url, upload_url;
+        author_first2 = ismissing(r.email_of_second_author) ? nothing : r.firstname_of_author,
+        author_email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author,
+        rep_first2 = rep2_name, rep_email2 = rep2_email,
+        draft = true
+    )
+
+    @info "Remote replication draft prepared for $caseID (deadline $(today() + Day(deadline_days)))"
+    return (upload_url = upload_url, download_url = download_url)
+end
+
 function reports_to_process()
     robust_db_operation() do con
         # This query finds reports that haven't been fully processed in iterations

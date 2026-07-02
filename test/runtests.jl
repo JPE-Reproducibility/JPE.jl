@@ -29,4 +29,6 @@ end
     # include("test_duck.jl")
     include("test_dropbox.jl")
     include("test_jpe_db.jl")
+    include("test_gmailing.jl")
+    include("test_actions.jl")
 end

@@ -115,6 +115,8 @@ function with_jpe_test_db(f::Function; seed::Bool = true)
             fr_path_full            VARCHAR,
             fr_path_apps            VARCHAR,
             dropbox_password        VARCHAR,
+            replicator_upload_id    VARCHAR,
+            replicator_upload_url   VARCHAR,
             first_arrival_date      DATE,
             date_with_authors       DATE,
             date_arrived_from_authors DATE,
