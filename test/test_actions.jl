@@ -1,3 +1,16 @@
+@testset "replicator_available" begin
+    rs = DataFrame(
+        :email => ["a@example.com", "b@example.com", "c@example.com"],
+        :name => ["A", "B", "C"],
+        Symbol("can_take_+1_package") => ["Yes", "No", missing],
+    )
+
+    @test JPE.replicator_available(rs, "a@example.com") == true
+    @test JPE.replicator_available(rs, "b@example.com") == false
+    @test JPE.replicator_available(rs, "c@example.com") == false
+    @test JPE.replicator_available(rs, "nobody@example.com") == false
+end
+
 @testset "dispatch_remote_replication" begin
 
     token = JPE.dbox_token

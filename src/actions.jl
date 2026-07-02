@@ -209,6 +209,20 @@ function display_replicators()
 end
 
 """
+    replicator_available(rs, email)
+
+True iff `email` has `can_take_+1_package == "Yes"` in the replicators table `rs`
+(as returned by `read_replicators()`). Missing rows or a missing/non-"Yes" value
+are treated as unavailable.
+"""
+function replicator_available(rs, email)
+    row = filter(r -> r.email == email, eachrow(rs))
+    isempty(row) && return false
+    val = first(row)."can_take_+1_package"
+    !ismissing(val) && val == "Yes"
+end
+
+"""
 Interactively select replicators for a paper
 """
 function select_replicators(paperID)
@@ -266,7 +280,9 @@ function select_replicators(paperID)
         else
             display_text = "$name ($email)"
         end
-        
+
+        replicator_available(rs, email) || (display_text *= " ⚠️ UNAVAILABLE")
+
         push!(options, display_text => email)
     end
     
@@ -282,19 +298,34 @@ function select_replicators(paperID)
         end
     end
     
-    # Display menu for primary replicator selection
-    primary_menu = RadioMenu([opt[1] for opt in options])
-    primary_choice = request(primary_menu)
-    
-    # Handle cancellation (if Esc is pressed)
-    if primary_choice == -1
-        println("Selection cancelled. Using first option as default.")
-        primary_choice = 1
+    # Display menu for primary replicator selection; re-prompt if the DE picks
+    # an unavailable replicator and doesn't want to proceed anyway.
+    local primary_email
+    while true
+        primary_menu = RadioMenu([opt[1] for opt in options])
+        primary_choice = request(primary_menu)
+
+        # Handle cancellation (if Esc is pressed)
+        if primary_choice == -1
+            println("Selection cancelled. Using first option as default.")
+            primary_choice = 1
+        end
+
+        candidate_email = options[primary_choice][2]
+
+        if replicator_available(rs, candidate_email)
+            primary_email = candidate_email
+            break
+        end
+
+        println("\n⚠️  $(options[primary_choice][1]) is marked unavailable (can't take +1 package).")
+        confirm_menu = RadioMenu(["Pick a different replicator", "Proceed anyway"])
+        if request(confirm_menu) == 2
+            primary_email = candidate_email
+            break
+        end
     end
-    
-    # Get the actual email from selection
-    primary_email = options[primary_choice][2]
-    
+
     # Get name of primary replicator
     primary_name = filter(r -> r.email == primary_email, eachrow(rs))[1].name
     
@@ -324,19 +355,33 @@ function select_replicators(paperID)
             end
         end
         
-        # Display menu for secondary replicator selection
-        secondary_menu = RadioMenu([opt[1] for opt in secondary_options])
-        secondary_choice = request(secondary_menu)
-        
-        # Handle cancellation (if Esc is pressed)
-        if secondary_choice == -1
-            println("Selection cancelled. Using first option as default.")
-            secondary_choice = 1
+        # Display menu for secondary replicator selection; re-prompt if the DE
+        # picks an unavailable replicator and doesn't want to proceed anyway.
+        while true
+            secondary_menu = RadioMenu([opt[1] for opt in secondary_options])
+            secondary_choice = request(secondary_menu)
+
+            # Handle cancellation (if Esc is pressed)
+            if secondary_choice == -1
+                println("Selection cancelled. Using first option as default.")
+                secondary_choice = 1
+            end
+
+            candidate_email = secondary_options[secondary_choice][2]
+
+            if replicator_available(rs, candidate_email)
+                secondary_email = candidate_email
+                break
+            end
+
+            println("\n⚠️  $(secondary_options[secondary_choice][1]) is marked unavailable (can't take +1 package).")
+            confirm_menu = RadioMenu(["Pick a different replicator", "Proceed anyway"])
+            if request(confirm_menu) == 2
+                secondary_email = candidate_email
+                break
+            end
         end
-        
-        # Get the actual email from selection
-        secondary_email = secondary_options[secondary_choice][2]
-        
+
         # Get name of secondary replicator
         secondary_name = filter(r -> r.email == secondary_email, eachrow(rs))[1].name
     end
