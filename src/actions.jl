@@ -69,12 +69,18 @@ function dispatch()
         println("dispatch $cid ?")
         yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
         if request(yes_no_menu) == 1
-            println(">>> preprocess $cid ?")
-            yes_no_menup = RadioMenu(["Yes","No"])  # Default is first option 
-            if request(yes_no_menup) == 1
+            dbox_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)
+            size_gb = dbox_get_folder_size(joinpath(dbox_path_full, "replication-package"))
+            @info "$cid package size on dropbox: $size_gb GB"
+            println(">>> preprocess $cid ($size_gb GB) ?")
+            pp_menu = RadioMenu(["run full preprocess","fetch only (no checks)","skip - already preprocessed"])
+            pp_choice = request(pp_menu)
+            if pp_choice == 1
                 preprocess2(r.paper_id)
-            else
+            elseif pp_choice == 2
                 preprocess2(r.paper_id,run_checks = false)
+            else
+                println(">>> skipping preprocess for $cid (already done)")
             end
             assign(r.paper_id)  # needs to prompt for which replicator
         else
@@ -93,6 +99,51 @@ function dispatch()
 
 end
 
+
+"""
+    audit_gh_runner_backlog() -> DataFrame
+
+Find iterations dispatched via the self-hosted gh-runner (`preprocess2(...)` with
+the "gh-runner" choice, recorded as `iterations.preprocess_mode == "gh-runner"`)
+whose `replication-package/` folder never landed on the repo branch — i.e. the
+`precheck.yml` workflow run never completed (e.g. the self-hosted runner machine
+was offline). Also reports the status of the most recent workflow run on that
+branch — a run stuck on "queued" is the tell that the runner never picked it up.
+
+Returns a DataFrame with columns: paper_id, round, gh_org_repo, run_status.
+"""
+function audit_gh_runner_backlog()
+    rows = with_db() do con
+        DBInterface.execute(con,
+            "SELECT paper_id, round, gh_org_repo FROM iterations WHERE preprocess_mode = 'gh-runner'") |> DataFrame
+    end
+
+    out = DataFrame(paper_id=String[], round=Int[], gh_org_repo=String[], run_status=String[])
+    for r in eachrow(rows)
+        (ismissing(r.gh_org_repo) || ismissing(r.round)) && continue
+        branch = "round$(r.round)"
+        if !gh_package_exists(r.gh_org_repo, branch)
+            push!(out, (r.paper_id, r.round, r.gh_org_repo, gh_last_run_status(r.gh_org_repo, branch)))
+        end
+    end
+    out
+end
+
+"""
+    redispatch_gh_runner(missing::DataFrame)
+
+Re-trigger `precheck.yml` (via `workflow_dispatch`) for each row of `missing`
+(as returned by `audit_gh_runner_backlog`). Use once the self-hosted runner is
+confirmed back online — this re-fires the existing branch's workflow directly,
+without repeating the Dropbox-link/repo-setup steps of `preprocess2`.
+"""
+function redispatch_gh_runner(missing::DataFrame)
+    for r in eachrow(missing)
+        branch = "round$(r.round)"
+        @info "re-triggering precheck.yml for $(r.gh_org_repo)@$branch"
+        run(`gh workflow run precheck.yml --repo $(r.gh_org_repo) --ref $branch`)
+    end
+end
 
 
 function mycp(src::AbstractString, dst::AbstractString; recursive::Bool = false, force::Bool=false)

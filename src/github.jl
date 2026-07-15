@@ -122,6 +122,38 @@ function gh_create_branch_on_github_from(gh_url,from,to)
     gh_silent_run(cmd)
 end
 
+"""
+    gh_package_exists(gh_org_repo::String, branch::String) -> Bool
+
+Check whether `replication-package/` exists at the root of `branch` in `gh_org_repo`.
+Used to detect gh-runner dispatches whose precheck workflow never ran (e.g. the
+self-hosted runner was offline), so the package never got downloaded and committed.
+"""
+function gh_package_exists(gh_org_repo::String, branch::String)::Bool
+    try
+        read(`gh api repos/$gh_org_repo/contents/replication-package\?ref=$branch --jq .\[0\].name`, String)
+        true
+    catch
+        false
+    end
+end
+
+"""
+    gh_last_run_status(gh_org_repo::String, branch::String) -> String
+
+Status of the most recent GitHub Actions run on `branch` of `gh_org_repo`
+(e.g. "completed", "queued", "in_progress"), or "none"/"unknown".
+A run stuck on "queued" for a long time indicates the self-hosted runner is offline.
+"""
+function gh_last_run_status(gh_org_repo::String, branch::String)::String
+    try
+        out = chomp(read(`gh run list --repo $gh_org_repo --branch $branch --limit 1 --json status --jq ".[0].status"`, String))
+        isempty(out) ? "none" : out
+    catch
+        "unknown"
+    end
+end
+
 function gh_repo_exists(repo::String)::Bool
     try
         read(`gh api repos/$repo --jq .id`, String)

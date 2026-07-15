@@ -130,7 +130,7 @@ function __init__()
     # verify gh CLI is authenticated as the JPE account
     gh_check_auth()
 
-    
+    @info "to check the health of the gh-runner pipeline, run audit_gh_runner_backlog()"
 
     if haskey(ENV,"JPE_TEST")
         @warn "running in test mode!"

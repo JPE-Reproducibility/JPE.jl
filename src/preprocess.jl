@@ -20,10 +20,27 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     d = tempdir()
     repoloc = joinpath(d, string(paperID, "-", round))
     o = pwd()
+
+    # a previous run may have left a local repo here (e.g. it crashed after
+    # fetching the package but before pushing) — offer to reuse it instead of
+    # blindly wiping and re-cloning, which would force a full re-download.
+    existing_repo = isdir(repoloc) && isdir(joinpath(repoloc, ".git"))
+    existing_package = existing_repo &&
+        isdir(joinpath(repoloc, "replication-package")) &&
+        !isempty(readdir(joinpath(repoloc, "replication-package")))
+    reuse_repo = false
+    if existing_repo
+        println(">>> found existing local repo at $repoloc" * (existing_package ? " (package already fetched)" : ""))
+        reuse_menu = RadioMenu(["reuse existing (skip re-clone/re-fetch)", "start fresh (delete & redo)"])
+        reuse_repo = request(reuse_menu) == 1
+    end
+
     cd(d)
 
-    # clone branch current "round"
-    gh_clone_branch(r.gh_org_repo, "round$(round)", to = repoloc)
+    # clone branch current "round" (skipped when reusing an existing local repo)
+    if !reuse_repo
+        gh_clone_branch(r.gh_org_repo, "round$(round)", to = repoloc)
+    end
 
     # check size of replication packge on dropbox and decide what to do
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)
@@ -99,7 +116,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     update_readme(joinpath(repoloc,"README.md"), r.gh_org_repo, "# $(get_case_id(r.journal, r.paper_slug, r.round))")
 
     # Create runner script
-    write_runner_script(repoloc, no_data_scan)
+    write_runner_script(repoloc, no_data_scan, run_checks = run_checks)
 
     # git branches
     branch = gh_get_default_branch(r.gh_org_repo)
@@ -114,24 +131,28 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     
     println("Where to preprocess this?")
     local_remote = RadioMenu(["local","gh-runner"])
-    if request(local_remote) == 1 # local
+    choice = request(local_remote)
+    preprocess_mode = choice == 1 ? "local" : "gh-runner"
+    db_update_cell("iterations", "paper_id = '$paperID' AND round = $round", "preprocess_mode", preprocess_mode)
+    if choice == 1 # local
         runner_env = ENV["JULIA_RUNNER_ENV"]
         runner_script = joinpath(repoloc,"runner_precheck.jl")
 
+        # always run the script to fetch/copy the replication package;
+        # run_checks only controls whether PackageScanner.precheck_package runs (see write_runner_script)
+        cmd = Cmd([
+            "julia",
+            "--project=$runner_env", "$runner_script"
+        ])
+        withenv("SHELL" => "/opt/homebrew/bin/fish",
+                "GITHUB_WORKSPACE" => "$repoloc",
+                "DROPBOX_DOWNLOAD_URL" => replace(link_url, "dl=0" => "dl=1")) do
+            res = chomp(read(run(Cmd(cmd)),String))
+        end
         if run_checks
-            # in a new julia process
-            cmd = Cmd([
-                "julia",
-                "--project=$runner_env", "$runner_script"
-            ])
-            withenv("SHELL" => "/opt/homebrew/bin/fish", 
-                    "GITHUB_WORKSPACE" => "$repoloc",
-                    "DROPBOX_DOWNLOAD_URL" => replace(link_url, "dl=0" => "dl=1")) do
-                res = chomp(read(run(Cmd(cmd)),String))
-            end
             @info "✓ Preprocess complete for paper $paperID round $round"
         else
-            @info "run_checks=false — skipping local runner script"
+            @info "✓ Package fetched for paper $paperID round $round — precheck skipped (run_checks=false)"
         end
 
         # commit all except data
@@ -209,7 +230,7 @@ SECURITY UPGRADE PATH (dormant): to switch to password-protected download,
 re-enable the password block in this function and in preprocess2(). See
 PROPOSAL.md for the full spec.
 """
-function write_runner_script(repoloc::String, no_data_scan::Vector{String})
+function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_checks::Bool = true)
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
         write(io, """
         using YAML
@@ -233,16 +254,22 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
 
         dest_path = joinpath(ENV["GITHUB_WORKSPACE"], "replication-package")
 
+        # ── Skip fetch entirely if package is already present locally ─────────
+        already_have_package = isdir(dest_path) && !isempty(readdir(dest_path))
+
         # ── Remote path: download via public Dropbox link ─────────────────────
         url = let u = get(ENV, "DROPBOX_DOWNLOAD_URL", nothing)
             (isnothing(u) || isempty(u)) ? nothing : u
         end
 
-        downloaded_ok = if !isnothing(url)
+        downloaded_ok = if already_have_package
+            @info "Package already present at \$dest_path — skipping download/copy"
+            true
+        elseif !isnothing(url)
             @info "Downloading package from secret Dropbox link..."
             t0 = time()
             try
-                run(`curl -fsSL -o package.zip \$url`)
+                run(`curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 -C - -o package.zip \$url`)
                 @info "Download complete in \$(round(time()-t0, digits=1))s"
                 true
             catch e
@@ -311,27 +338,31 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String})
         end
 
         # ── PackageScanner precheck ────────────────────────────────────────────
-        pkg_size     = vars["package_size_gb"]
-        max_pkg_size = vars["package_max_pkg_size_gb"]
-        max_file_size = vars["package_max_file_size_gb"]
+        if $(run_checks)
+            pkg_size     = vars["package_size_gb"]
+            max_pkg_size = vars["package_max_pkg_size_gb"]
+            max_file_size = vars["package_max_file_size_gb"]
 
-        if pkg_size > max_pkg_size
-            @info "Package >\$(max_pkg_size) GB — using partial extraction mode"
-            pkg_dir, manifest = PackageScanner.prepare_package_for_precheck(
-                dest_path, size_threshold_gb=max_file_size, interactive=false)
-            PackageScanner.precheck_package(pkg_dir, pre_manifest=manifest,
-                                            no_data_scan=$(no_data_scan))
-        else
-            @info "Unzipping files in \$dest_path"
-            try
-                zips = PackageScanner.read_and_unzip_directory(dest_path)
-                @info "Unzipped \$(length(zips)) file(s)"
-            catch e
-                @warn "Unzip had issues (may be okay)" exception=e
+            if pkg_size > max_pkg_size
+                @info "Package >\$(max_pkg_size) GB — using partial extraction mode"
+                pkg_dir, manifest = PackageScanner.prepare_package_for_precheck(
+                    dest_path, size_threshold_gb=max_file_size, interactive=false)
+                PackageScanner.precheck_package(pkg_dir, pre_manifest=manifest,
+                                                no_data_scan=$(no_data_scan))
+            else
+                @info "Unzipping files in \$dest_path"
+                try
+                    zips = PackageScanner.read_and_unzip_directory(dest_path)
+                    @info "Unzipped \$(length(zips)) file(s)"
+                catch e
+                    @warn "Unzip had issues (may be okay)" exception=e
+                end
+                @info "Running precheck on \$dest_path"
+                PackageScanner.precheck_package(dest_path, no_data_scan=$(no_data_scan))
+                @info "✓ Precheck complete"
             end
-            @info "Running precheck on \$dest_path"
-            PackageScanner.precheck_package(dest_path, no_data_scan=$(no_data_scan))
-            @info "✓ Precheck complete"
+        else
+            @info "run_checks=false — package fetched, skipping PackageScanner precheck"
         end
         """)
     end

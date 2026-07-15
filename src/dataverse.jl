@@ -158,13 +158,10 @@ function dv_fetch_all_datasets(; subtree::String="JPE", include_size = true)
             error("Failed at start=$start: HTTP $(response.status)")
         end
 
-        data = JSON.read(response.body)
+        data = JSON.parse(String(response.body))
         items = data["data"]["items"]
-        return items
-        
-        
-        if isempty(items) 
-            # finish!(prog)
+
+        if isempty(items)
             break
         end
 
@@ -418,6 +415,233 @@ function download_dataset_files(api_token::String, server_url::String, persisten
         file_name = file["dataFile"]["filename"]
         dv_download_file(file_id, file_name)
     end
+end
+
+# ─────────────────────────────────────────────────────────────────────────
+# Downloads/citations report: matches JPE replication packages on Dataverse
+# to their journal article (via Crossref) to compare package downloads
+# against article citations, x-axis = time since article publication.
+# ─────────────────────────────────────────────────────────────────────────
+
+"""
+    dv_downloads_total(package_doi; retries = 4)
+
+Cumulative download count for a dataverse dataset (Make Data Count). Harvard
+Dataverse's load balancer throttles rapid back-to-back requests with a bare
+403 (no Retry-After header), so this retries with exponential backoff.
+"""
+function dv_downloads_total(package_doi::AbstractString; retries::Int = 4)
+    url = "$(dvserver())/api/datasets/:persistentId/makeDataCount/downloadsTotal?persistentId=$(package_doi)"
+    headers = Dict("X-Dataverse-key" => dvtoken())
+    for attempt in 1:retries
+        try
+            response = HTTP.get(url, headers)
+            result = JSON.parse(String(response.body))
+            return result["data"]["downloadsTotal"]
+        catch e
+            attempt == retries && rethrow(e)
+            sleep(2.0 * attempt)
+        end
+    end
+end
+
+"citation count for a journal article DOI, via OpenAlex"
+function openalex_citations(article_doi::AbstractString)
+    url = "https://api.openalex.org/works/https://doi.org/$(article_doi)?mailto=jpe.dataeditor@gmail.com"
+    response = HTTP.get(url)
+    result = JSON.parse(String(response.body))
+    result["cited_by_count"]
+end
+
+"""
+    crossref_pub_date(doi)
+
+Single-DOI Crossref lookup for a reliable publication date. Only used as a
+fallback when the DOI isn't already in the bulk-fetched `dv_jpe_journal_articles`
+table — OpenAlex's own `publication_date` field has been observed to be wrong
+(e.g. reporting 2009 for an article Crossref correctly dates to 2023-12-01),
+so Crossref is the trusted source for dates here, not OpenAlex.
+"""
+function crossref_pub_date(doi::AbstractString)
+    url = "https://api.crossref.org/works/$(doi)"
+    response = HTTP.get(url)
+    result = JSON.parse(String(response.body))
+    parts = get(get(result["message"], "published", Dict()), "date-parts", [[nothing]])[1]
+    isnothing(parts[1]) && return missing
+    y = parts[1]
+    m = length(parts) >= 2 ? parts[2] : 1
+    d = length(parts) >= 3 ? parts[3] : 1
+    Date(y, m, d)
+end
+
+"regex-extract a journal article DOI from a dataverse dataset's own `publications` metadata, if present"
+function dv_extract_article_doi(item::Dict)
+    pubs = get(item, "publications", nothing)
+    (isnothing(pubs) || isempty(pubs)) && return missing
+    citation = get(pubs[1], "citation", "")
+    m = match(r"doi\.org/(10\.\d{4,}[^\s\"]+)", citation)
+    isnothing(m) ? missing : rstrip(m.captures[1], ['.', ')', ']', '"'])
+end
+
+"""
+    dv_jpe_journal_articles(; since = Date(2020,1,1))
+
+Pull the full JPE journal table of contents from Crossref (ISSN 0022-3808),
+filtered to real articles (drops Front Matter / Recent Referees noise, which
+carry no author list).
+"""
+function dv_jpe_journal_articles(; since::Date = Date(2020, 1, 1))
+    issn = "0022-3808"
+    url = "https://api.crossref.org/journals/$(issn)/works?filter=from-pub-date:$(since),type:journal-article&rows=1000&select=DOI,title,published,author"
+    response = HTTP.get(url)
+    result = JSON.parse(String(response.body))
+    items = result["message"]["items"]
+
+    rows = NamedTuple[]
+    for it in items
+        authors = get(it, "author", [])
+        isempty(authors) && continue
+        title = get(it, "title", [""])
+        isempty(title) && continue
+        parts = get(get(it, "published", Dict()), "date-parts", [[nothing]])[1]
+        isnothing(parts[1]) && continue
+        y = parts[1]
+        m = length(parts) >= 2 ? parts[2] : 1
+        d = length(parts) >= 3 ? parts[3] : 1
+        push!(rows, (
+            doi = it["DOI"],
+            title = title[1],
+            pub_date = Date(y, m, d),
+            authors = [lowercase(get(a, "family", "")) for a in authors]
+        ))
+    end
+    DataFrame(rows)
+end
+
+"extract surname from an author name, handling both \"Last, First\" and \"First Last\" formats"
+function _surname(a::AbstractString)
+    a = strip(a)
+    parts = split(a, ",")
+    surname = length(parts) > 1 ? parts[1] : split(a)[end]
+    lowercase(strip(surname))
+end
+
+"normalize a title for fuzzy matching: lowercase, strip accents/punctuation, token set"
+function _title_tokens(s::AbstractString)
+    s = Unicode.normalize(lowercase(s), stripmark = true)
+    s = replace(s, r"[^a-z0-9\s]" => " ")
+    Set(split(s))
+end
+
+"""
+    dv_match_article(item::Dict, articles::DataFrame)
+
+Identify which journal article a dataverse dataset belongs to: try the
+dataset's own linked-publication field first, then fall back to fuzzy
+title/author matching against the Crossref JPE table of contents (needed
+because at posting time `item["publications"]` is usually still empty — the
+paper is only "forthcoming").
+"""
+function dv_match_article(item::Dict, articles::DataFrame)
+    direct = dv_extract_article_doi(item)
+    !ismissing(direct) && return direct
+
+    dataset_title = replace(item["name"], r"^Replication (Data|Code|Codes)( and Instructions)? for:?\s*"i => "")
+    dataset_title = strip(dataset_title, ['"', '“', '”', ' '])
+    dtoks = _title_tokens(dataset_title)
+    isempty(dtoks) && return missing
+
+    dataset_surnames = Set(_surname(a) for a in get(item, "authors", []))
+
+    best_doi, best_score = missing, 0.0
+    for r in eachrow(articles)
+        isempty(intersect(dataset_surnames, Set(r.authors))) && continue
+        atoks = _title_tokens(r.title)
+        isempty(atoks) && continue
+        score = length(intersect(dtoks, atoks)) / min(length(dtoks), length(atoks))
+        if score > best_score
+            best_score, best_doi = score, r.doi
+        end
+    end
+
+    best_score >= 0.6 ? best_doi : missing
+end
+
+"""
+    dv_metrics_report(; write_csv = true, out_dir = joinpath(homedir(), "git", "jpe", "Reports", "data"))
+
+Build the downloads-vs-citations dataset for the bi-annual report: every
+published JPE dataverse package, matched to its journal article (Crossref),
+with cumulative downloads (Dataverse Make Data Count) and citations
+(OpenAlex), plus the article's publication date to anchor "time since
+publication" on the x-axis.
+"""
+function dv_metrics_report(; write_csv = true, out_dir = joinpath(homedir(), "git", "jpe", "Reports", "data"))
+    @info "fetching all JPE datasets from dataverse..."
+    all_datasets = dv_fetch_all_datasets(subtree = "JPE", include_size = false)
+    published = dv_filter_published_datasets(all_datasets)
+    @info "$(length(published)) published datasets found"
+
+    @info "fetching JPE journal table of contents from Crossref..."
+    articles = dv_jpe_journal_articles()
+    @info "$(nrow(articles)) journal articles found"
+    pub_dates = Dict(String(r.doi) => r.pub_date for r in eachrow(articles))
+
+    rows = NamedTuple[]
+    n_unmatched = 0
+    for item in published
+        package_doi = item["global_id"]
+        article_doi = dv_match_article(item, articles)
+        if ismissing(article_doi)
+            n_unmatched += 1
+            continue
+        end
+        article_doi = String(article_doi)
+
+        downloads = try
+            dv_downloads_total(package_doi)
+        catch e
+            @warn "downloads fetch failed for $package_doi" exception=e
+            missing
+        end
+        sleep(0.3)
+
+        citations = try
+            openalex_citations(article_doi)
+        catch e
+            @warn "OpenAlex fetch failed for $article_doi" exception=e
+            missing
+        end
+
+        pub_date = get(pub_dates, article_doi) do
+            try
+                crossref_pub_date(article_doi)
+            catch e
+                @warn "Crossref pub date fetch failed for $article_doi" exception=e
+                missing
+            end
+        end
+
+        push!(rows, (
+            package_doi = package_doi,
+            article_doi = article_doi,
+            downloads = downloads,
+            citations = citations,
+            article_pub_date = pub_date
+        ))
+    end
+
+    df = DataFrame(rows)
+    @info "$(nrow(df)) datasets matched to an article, $n_unmatched unmatched"
+
+    if write_csv
+        mkpath(out_dir)
+        path = joinpath(out_dir, "dataverse_metrics_$(Dates.format(today(), "yyyy-mm-dd")).csv")
+        CSV.write(path, df)
+        @info "wrote $path"
+    end
+
+    df
 end
 
 # z =JPE.dv_get_dataset_metadata("doi:10.7910/DVN/VXR3XB")

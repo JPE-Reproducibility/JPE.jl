@@ -691,6 +691,7 @@ function db_get_table_schema(table::String)
             "dropbox_password" => Dict(:type => "VARCHAR", :constraints => ""),
             "replicator_upload_id" => Dict(:type => "VARCHAR", :constraints => ""),
             "replicator_upload_url" => Dict(:type => "VARCHAR", :constraints => ""),
+            "preprocess_mode" => Dict(:type => "VARCHAR", :constraints => ""),
             "_primary_key" => Dict(:columns => ["paper_id", "round"])
         ),
         "reports" => Dict(
