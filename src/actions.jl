@@ -525,6 +525,76 @@ function assign_replicators(paperID, selection)
 end
 
 
+"""
+    reassign_replicator(paperID)
+
+Reassign the current round's replicator(s) for `paperID` to someone else —
+e.g. the original replicator became unavailable and their Dropbox download
+link expired. Unlike `assign`/`assign_replicators`, this does NOT require the
+paper to be in `author_back_de` status: it operates on a paper already
+`with_replicator`, regenerates the package download link (this transparently
+handles an expired link), overwrites `replicator1`/`replicator2` for the
+current round, and sends a fresh assignment email to the newly selected
+replicator(s) only. The old replicator is not notified. The paper's `status`
+is left unchanged.
+"""
+function reassign_replicator(paperID)
+    paper_row_df = db_filter_paper(paperID)
+    nrow(paper_row_df) == 1 || error("Paper ID $paperID not found or has multiple entries")
+    paper_row = paper_row_df[1, :]
+    current_status = paper_row.status
+
+    # Interactively pick new replicator(s) for the current round
+    selection = select_replicators(paperID)
+
+    old_iter = db_filter_iteration(paperID, selection.current_round)
+    nrow(old_iter) == 1 || error("No iteration found for $paperID round $(selection.current_round)")
+    old_replicator1 = old_iter[1, :replicator1]
+    old_replicator2 = old_iter[1, :replicator2]
+
+    # Regenerate the package download link (also fixes an expired one)
+    download_url = dbox_link_at_path(selection.current_iteration.file_request_path, dbox_token)
+    repo_url = selection.current_iteration.github_url
+    caseID = case_id(paper_row.journal, paper_row.surname_of_author, paperID, selection.current_round)
+
+    # Reuse the status-transition machinery as a no-op transaction wrapper
+    # (from_status == to_status == current_status), so we get the same
+    # transactional guarantees as assign_replicators without touching status.
+    result = update_paper_status(paperID, current_status, current_status) do con
+        if !isnothing(selection.secondary_email)
+            gmail_assign(selection.primary_name, selection.primary_email, caseID, download_url, repo_url,
+                        first2=selection.secondary_name, email2=selection.secondary_email, back=true)
+        else
+            gmail_assign(selection.primary_name, selection.primary_email, caseID, download_url, repo_url, back=true)
+        end
+
+        DBInterface.execute(con, """
+        UPDATE iterations
+        SET replicator1 = ?, date_assigned_repl = ?
+        WHERE paper_id = ? AND round = ?
+        """, (selection.primary_email, today(), paperID, selection.current_round))
+
+        # Always overwrite replicator2 (including clearing it to NULL if no
+        # secondary was picked this time), so a stale prior secondary doesn't linger.
+        DBInterface.execute(con, """
+        UPDATE iterations
+        SET replicator2 = ?
+        WHERE paper_id = ? AND round = ?
+        """, (selection.secondary_email, paperID, selection.current_round))
+
+        return (primary=selection.primary_email, secondary=selection.secondary_email)
+    end
+
+    println("✅ Reassigned paper $(paperID) round $(selection.current_round)")
+    old_str = ismissing(old_replicator2) || isnothing(old_replicator2) ? "$(old_replicator1)" : "$(old_replicator1), $(old_replicator2)"
+    new_str = isnothing(result.secondary) ? "$(result.primary)" : "$(result.primary), $(result.secondary)"
+    println("   old: $(old_str)")
+    println("   new: $(new_str)")
+    println()
+
+    return result
+end
+
 function _show_dropbox_password_for_assignment(paperID, round, primary_email)
     iter = db_filter_iteration(paperID, round)
     if nrow(iter) == 0
