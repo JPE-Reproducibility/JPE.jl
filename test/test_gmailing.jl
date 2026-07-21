@@ -18,3 +18,31 @@
     @test occursin("remote-protocol.html", body)
 
 end
+
+@testset "gmail_file_request_body" begin
+
+    body_no_paper = JPE.gmail_file_request_body(
+        "Jane",
+        "TEST-CASEID",
+        "A Great Paper",
+        "https://dropbox.com/request/pkg"
+    )
+
+    @test occursin("Jane", body_no_paper)
+    @test occursin("TEST-CASEID", body_no_paper)
+    @test occursin("https://dropbox.com/request/pkg", body_no_paper)
+    @test !occursin("also share the latest version", body_no_paper)
+
+    body_with_paper = JPE.gmail_file_request_body(
+        "Jane",
+        "TEST-CASEID",
+        "A Great Paper",
+        "https://dropbox.com/request/pkg",
+        "https://dropbox.com/request/paper"
+    )
+
+    @test occursin("https://dropbox.com/request/pkg", body_with_paper)
+    @test occursin("https://dropbox.com/request/paper", body_with_paper)
+    @test occursin("also share the latest version", body_with_paper)
+
+end

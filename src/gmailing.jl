@@ -411,7 +411,7 @@ function gmail_rnr_body(first,paperID,title,url)
 end
 
 
-function gmail_file_request(name,paperID,title,url,email1;email2 = nothing, JO = false)
+function gmail_file_request(name,paperID,title,url,email1;email2 = nothing, JO = false, paper_url = nothing)
     if JO
         body = gmail_file_request_JO_body(name,paperID,title,url)
     gmail_send(
@@ -423,7 +423,7 @@ function gmail_file_request(name,paperID,title,url,email1;email2 = nothing, JO =
 
     else
         to = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
-        body = gmail_file_request_body(name,paperID,title,url)
+        body = gmail_file_request_body(name,paperID,title,url,paper_url)
         gmail_send(
             to,
             "JPE Replication Package $paperID Upload Request",
@@ -478,8 +478,8 @@ function gmail_file_request_JO_body(authorlast,paperID,title,url)
     string(m1,signature())
 end
 
-function gmail_file_request_body(first,paperID,title,url)
-    @debug first paperID title url
+function gmail_file_request_body(first,paperID,title,url,paper_url = nothing)
+    @debug first paperID title url paper_url
 
     m1 = """
     Dear $first,
@@ -496,6 +496,13 @@ function gmail_file_request_body(first,paperID,title,url)
     Please review the required contents of your replication package described at https://jpedataeditor.github.io/ .
     <br>
     <br>
+    $(isnothing(paper_url) ? "" : """
+    Please use the following dropbox upload link to also share the latest version of your paper (both in pdf and latex format, if applicable). Please let me know if there are any changes between that version and what was conditionally accepted by your handling editor:
+    <br>
+    $paper_url
+    <br>
+    <br>
+    """)
     It is our policy to ask for the submission of your replication package within 30 days, i.e., by $(Dates.format(today() + Day(30), dateformat"d U Y")). If you foresee a problem with meeting this deadline, you will need to request an extension. 
     <br>
     <br>
