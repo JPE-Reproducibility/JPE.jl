@@ -928,13 +928,13 @@ function de_make_decision(paperID, decision)
     end
     
     r = NamedTuple(paper[1, :])
-    
-    # Validate current status
-    if !any(occursin.(r.status, ["replicator_back_de","author_back_de"]))
+
+    # Validate current status (revise reuses prepare_rnrs, which enforces its own status gate)
+    if decision == "revise" && r.status != "replicator_back_de" && r.status != "author_back_de"
         error("Paper must be in either 'replicator_back_de' or 'author_back_de' status to process a decision")
     end
-    
-    
+
+
     # Process based on decision
     if decision == "accept"
         update_paper_status(paperID, r.status, "acceptable_package") do con
