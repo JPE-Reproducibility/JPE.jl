@@ -252,7 +252,7 @@ function google_arrivals()
         println("notify author and JO for $(r.paper_slug)?")
         yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
         if request(yes_no_menu) == 1
-            gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author), email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author))
+            gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author), email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author), paper_url = r.file_request_url_paper)
 
             r.date_with_authors = Dates.today()
 
