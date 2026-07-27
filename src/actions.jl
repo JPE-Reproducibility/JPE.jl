@@ -466,7 +466,7 @@ function assign_replicators(paperID, selection)
     
     # Send email to replicators
     # Get necessary information for email
-    download_url = dbox_link_at_path(current_iteration.file_request_path, dbox_token)
+    download_url = replace(dbox_link_at_path(current_iteration.file_request_path, dbox_token), "dl=0" => "dl=1")
     repo_url = current_iteration.github_url
     
     # Create case ID for email
