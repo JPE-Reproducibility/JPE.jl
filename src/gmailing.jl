@@ -302,7 +302,13 @@ function gmail_g2g_body(first,paperID,title,data_statement)
     <br>
     🚨 It is of great importance that you do not modify the files in your submitted package anymore. We will check the final version of the package you sent us against what you will publish on dataverse in a very strict (and automated) fashion.
     Unless the files on dataverse are <i>exactly identical</i> to ours, this check will fail.
-    Please remove the letter to the data editor before you submit - and do <b>not</b> include any confidential data.
+    Please remove the following items from your package before submitting it to dataverse:
+    <br>
+    <ol>
+    <li>Any letter or communication for the Data Editor.</li>
+    <li>Any confidential data which you do not intend to publish.</li>
+    <li>Both the tex source and any compiled pdf versions of your actual paper - including those in the package is against copyright rules of the JPE (paper may only be distributed via JPE).</li>
+    </ol>
     <br>
     <br>
 
