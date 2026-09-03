@@ -169,7 +169,7 @@ function paper_report(paperID; save_csv=false, csv_path=nothing)
             println(tottime[1])
         else
             println("Total Time taken until today:")
-            println(Dates.today() - paper.first_arrival_date[1] )
+            println(Dates.today() - paper.first_arrival_date)
 
         end
 

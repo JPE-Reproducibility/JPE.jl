@@ -60,7 +60,11 @@ end
     @test occursin("TEST-CASEID", body)
     @test occursin("A Great Paper", body)
     @test occursin("Data are available upon request.", body)
-    @test occursin("Please remove the following items", body)
+    @test occursin("Please <b>remove</b> the following items", body)
+    # inline code span stays unstyled: no CSS to be mangled by strict mail clients
+    @test occursin("<code>[INSERT YOUR DOI HERE]</code>", body)
+    @test !occursin("<pre>", body)
+    @test !occursin("<code style", body)
     @test occursin("<ol>", body)
     @test occursin("Any letter or communication for the Data Editor.", body)
     @test occursin("Any confidential data which you do not intend to publish.", body)

@@ -23,8 +23,8 @@
 
 ## Code Execution and Testing
 
-- use the julia-mcp to run julia code in a persistent session.
-- execute tests via `julia_eval(code, test/, timeout?)` where test/ is relative to the package root.
+- use the kaimon mcp to run julia
+- use kaimon to execute and check tests
 
 ## git commits
 
