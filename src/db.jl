@@ -162,6 +162,21 @@ function db_update_cell(table::String,whereclause,var,val)
     end
 end
 
+"mark an iteration as billed under `period` (e.g. \"2026-Q3\"), recording the current timestamp"
+function db_mark_billed!(paper_id, round, period)
+    with_db() do con
+        DBInterface.execute(con, "BEGIN TRANSACTION")
+        stmt = DBInterface.prepare(con, """
+        UPDATE iterations
+        SET billed_at = ?, billed_period = ?
+        WHERE paper_id = ? AND round = ?
+        """
+        )
+        DBInterface.execute(stmt, (Dates.now(), period, paper_id, round))
+        DBInterface.execute(con, "COMMIT")
+    end
+end
+
 
 function db_rollback()
     with_db() do con
@@ -692,6 +707,8 @@ function db_get_table_schema(table::String)
             "replicator_upload_id" => Dict(:type => "VARCHAR", :constraints => ""),
             "replicator_upload_url" => Dict(:type => "VARCHAR", :constraints => ""),
             "preprocess_mode" => Dict(:type => "VARCHAR", :constraints => ""),
+            "billed_at" => Dict(:type => "TIMESTAMP", :constraints => ""),
+            "billed_period" => Dict(:type => "VARCHAR", :constraints => ""),
             "_primary_key" => Dict(:columns => ["paper_id", "round"])
         ),
         "reports" => Dict(

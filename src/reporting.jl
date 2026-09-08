@@ -668,13 +668,16 @@ function replicator_hours_worked()
         transform([:journal,:paper_slug, :round] => ByRow((x,y,z) -> get_case_id(x,y,z, fpath = false)) => :case_id)
         transform([:date_assigned_repl, :date_completed_repl] => ByRow((x,y) -> y - x) => :days_taken )
         # take care of 2-replicator cases
-        select(:date_completed_repl, :days_taken, :replicator1, :replicator2, :hours1, :hours2, :case_id, :comments)
+        select(:date_completed_repl, :days_taken, :replicator1, :replicator2, :hours1, :hours2, :case_id, :comments,
+               :paper_id, :round, :billed_at, :billed_period)
     end
     x2 = @chain x1 begin
         dropmissing([:replicator2, :hours2])
-        select(:date_completed_repl, :days_taken, :case_id, :comments,:hours2 => :hours, :replicator2 => :replicator)
+        select(:date_completed_repl, :days_taken, :case_id, :comments, :paper_id, :round, :billed_at, :billed_period,
+               :hours2 => :hours, :replicator2 => :replicator)
     end
-    select!(x1, :date_completed_repl, :days_taken, :replicator1 => :replicator, :hours1 => :hours, :case_id, :comments)
+    select!(x1, :date_completed_repl, :days_taken, :replicator1 => :replicator, :hours1 => :hours, :case_id, :comments,
+            :paper_id, :round, :billed_at, :billed_period)
     
     append!(x1,x2)
 end
@@ -704,24 +707,62 @@ function _replicator_hours_summary(; test_max_hours = 1.5, rate = 25.0, EUR2USD 
     h, h_summary
 end
 
-function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, write_gs = false, EUR2USD = 1.1765, email_repl_subset = nothing)
+"start/end Date bounds (inclusive) for a calendar-quarter label like \"2026-Q3\""
+function quarter_bounds(q::AbstractString)
+    y, qn = split(q, "-Q")
+    y = parse(Int, y); qn = parse(Int, qn)
+    m0 = 3 * (qn - 1) + 1
+    Date(y, m0, 1), lastdayofmonth(Date(y, m0 + 2, 1))
+end
+
+"rows of `h` (as returned by replicator_hours_worked/_replicator_hours_summary) due to be billed now: date_completed_repl in [period_start, period_end], excluding already-billed rows unless force_rebill=true"
+function _billable_hours(h::AbstractDataFrame, period_start::Date, period_end::Date; force_rebill::Bool = false)
+    billable = subset(h, :date_completed_repl => ByRow(d -> period_start <= d <= period_end))
+    force_rebill || subset!(billable, :billed_at => ByRow(ismissing))
+    billable
+end
+
+"""
+    replicator_billing(; ...)
+
+Send/record invoices for hours with `date_completed_repl` in `[period_start, period_end]`
+(default: the calendar quarter bounds of `current`, itself defaulting to today's quarter).
+
+Iterations already billed (non-missing `billed_at`) are skipped unless `force_rebill=true` —
+this makes reruns for the same period idempotent instead of double-invoicing. Set `confirm=false`
+to skip the interactive Yes/No prompt (e.g. for tests or scripted runs).
+
+Passing an explicit `period_start`/`period_end` decouples invoicing from calendar quarters
+entirely — use this to split a quarter into two billing runs (an early cutoff, and a rollover
+run for the remaining days merged into the next period).
+"""
+function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, write_gs = false,
+                              EUR2USD = 1.1765, email_repl_subset = nothing,
+                              current::Union{Nothing,AbstractString} = nothing,
+                              period_start::Union{Nothing,Date} = nothing,
+                              period_end::Union{Nothing,Date} = nothing,
+                              force_rebill::Bool = false,
+                              confirm::Bool = true)
 
     rateUSD = rate * EUR2USD
     h, h_summary = _replicator_hours_summary(; test_max_hours, rate, EUR2USD)
-
-    # sending emails
     replicators_df = read_replicators()
 
-    current = string(year(today()),"-Q",quarterofyear(today()))
-    println("sending billing information for " * current)
-    println("is that correct? if not enter different quarter")
-    yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option (Yes)
-    if request(yes_no_menu) == 1 
-        # nothing
-    else
-        choice = Term.Prompts.Prompt("enter required quarter") |> ask
-        current = choice
-        println("sending emails about $choice")
+    isnothing(current) && (current = string(year(today()), "-Q", quarterofyear(today())))
+    if isnothing(period_start) || isnothing(period_end)
+        period_start, period_end = quarter_bounds(current)
+    end
+
+    println("billing \"$current\": hours with date_completed_repl in [$period_start, $period_end]")
+    force_rebill || println("already-billed iterations are skipped (pass force_rebill=true to override)")
+
+    if confirm
+        println("correct? if not, abort and re-call with explicit period_start/period_end/current")
+        yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option (Yes)
+        if request(yes_no_menu) != 1
+            println("aborted")
+            return nothing
+        end
     end
 
     # emailing setup: recipients
@@ -729,10 +770,9 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, 
         subset!(h, :replicator => ByRow(occursin(email_repl_subset)))
     end
 
-    h_repl = @chain h begin
-        subset(:quarter => ByRow(==(current)))
-        groupby(:replicator)
-    end
+    billable = _billable_hours(h, period_start, period_end; force_rebill)
+
+    h_repl = groupby(billable, :replicator)
 
     for g in h_repl
         # update wrong email addresses
@@ -742,26 +782,31 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, 
             g.replicator[1]
         end
         r = subset(replicators_df, :email => ByRow(==(search_email)))
-        # println("trying $r")
-        # println(g)
         (sheet_row, col_idx,next_invoice_num) = replicator_next_invoice(replicators_df,r.email[1])
 
-        gmail_send_invoice(r.name[1],r.email[1],select(g,Not(:replicator)), test_max_hours,rate,EUR2USD,next_invoice_num,send = email)
-        # updated invoice field
+        invoice_table = select(g, Not([:replicator, :paper_id, :round, :billed_at, :billed_period]))
+        gmail_send_invoice(r.name[1],r.email[1],invoice_table, test_max_hours,rate,EUR2USD,next_invoice_num,send = email)
+        # updated invoice field + mark billed
         if email
             replicator_write_invoice(sheet_row,col_idx,string("INV-",next_invoice_num))
+            for row in eachrow(g)
+                db_mark_billed!(row.paper_id, row.round, current)
+            end
         end
     end
 
-    x = select(h_summary, :replicator, :quarter, :case_id => ByRow(x -> length(x)) => :num_jobs, :hours, :pay_EUR, :pay_USD)
-    sort!(x,[:quarter,:replicator])
+    x = @chain billable begin
+        groupby(:replicator)
+        combine(:case_id => (v -> length(v)) => :num_jobs, :hours => sum => :hours)
+    end
+    x.pay_EUR = x.hours .* rate
+    x.pay_USD = x.hours .* rateUSD
+    sort!(x, :replicator)
 
     println()
-    println("budget report:")
-    b = combine(
-        groupby(x, :quarter),
-        :hours => sum => :hours, :num_jobs => sum => :num_jobs, :pay_EUR => sum => :cost_EUR, :pay_USD => sum => :cost_USD
-    )
+    println("budget report for $current [$period_start, $period_end]:")
+    b = combine(x, :hours => sum => :hours, :num_jobs => sum => :num_jobs,
+                   :pay_EUR => sum => :cost_EUR, :pay_USD => sum => :cost_USD)
 
     pretty_table(b)
 
@@ -772,20 +817,19 @@ function replicator_billing(; test_max_hours = 1.5, rate = 25.0, email = false, 
         googlesheets4::write_sheet(
             data = df,
             ss = id,
-            sheet = "billing"
+            sheet = $("billing-" * current)
         )
         df2 = $(b)
         googlesheets4::write_sheet(
             data = df2,
             ss = id,
-            sheet = "quarterly-totals"
+            sheet = $("totals-" * current)
         )
         """
 
     end
 
-
-    h, h_summary
+    h_repl, x
 end
 
 function quarterly_budget_table(; test_max_hours = 1.5, rate = 25.0, EUR2USD = 1.1765)
