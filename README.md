@@ -387,6 +387,8 @@ Tracks each revision round of a paper:
 | `date_completed_repl` | DATE | When replicator finished |
 | `date_decision_de` | DATE | When DE made decision |
 | `decision_de` | VARCHAR | DE's decision (accept/rnr) |
+| `billed_at` | TIMESTAMP | When this iteration's hours were invoiced (set by `replicator_billing(email=true)`) |
+| `billed_period` | VARCHAR | Billing period label this iteration was invoiced under (e.g. `"2026-Q3"`) |
 | `file_request_id_pkg` | VARCHAR | File request ID for this round |
 | `file_request_id_paper` | VARCHAR | Paper file request ID |
 | `file_request_url_pkg` | VARCHAR | Package file request URL |
@@ -627,8 +629,8 @@ time_in_status_report()
 
 #### Replicator Billing
 ```julia
-# Generate billing report for replicators
-hours, summary = replicator_billing(
+# Generate billing report for replicators (default: current calendar quarter)
+h_repl, x = replicator_billing(
     test_max_hours = 1.5,  # Cap test cases at 1.5 hours
     rate = 25.0,           # EUR per hour
     email = true,          # Send invoices
@@ -636,6 +638,38 @@ hours, summary = replicator_billing(
     EUR2USD = 1.18        # Exchange rate
 )
 ```
+
+By default, hours are selected by `date_completed_repl` falling within the calendar-quarter
+bounds of `current` (e.g. `"2026-Q3"` → Jul 1–Sep 30). Every iteration actually invoiced
+(only when `email=true`) is stamped with `billed_at`/`billed_period` — a rerun for the same
+period automatically **skips already-billed iterations**, so it's safe to call
+`replicator_billing()` again without double-invoicing. Pass `force_rebill=true` to override
+that and re-invoice on purpose (e.g. to correct a mistake).
+
+##### How To: split a quarter (e.g. an extraordinary early cutoff)
+
+Pass explicit `period_start`/`period_end` to decouple invoicing from the calendar quarter
+entirely. Example: close Q3 early on Sep 20 instead of Sep 30, then roll the remaining days
+into the Q4 run once they're logged:
+
+```julia
+# early cutoff run: only hours completed Jul 1 – Sep 20
+replicator_billing(current = "2026-Q3",
+                    period_start = Date(2026,7,1), period_end = Date(2026,9,20),
+                    email = true, write_gs = true)
+
+# later, once Sep 21-30 hours are logged: rolled into the Q4 run
+replicator_billing(current = "2026-Q4",
+                    period_start = Date(2026,9,21), period_end = Date(2026,12,31),
+                    email = true, write_gs = true)
+```
+
+Because already-billed iterations are skipped by default, the second call won't touch
+anything invoiced in the first — and hours completed Sep 21-30 (which are calendar-tagged
+`2026-Q3` internally, but were never invoiced in the early Q3 run) get correctly swept up
+into the Q4 run instead of silently lost.
+
+Set `confirm=false` to skip the interactive Yes/No prompt (e.g. scripted runs).
 
 ### Administrative Operations
 
@@ -1276,7 +1310,9 @@ global_report()                                 # Global statistics
 paper_report(paperID)                           # Detailed paper report
 replicator_workload_report()                    # Current workloads
 time_in_status_report()                         # Average times per status
-replicator_billing(; rate=25.0, email=false)   # Generate billing
+replicator_billing(; rate=25.0, email=false,   # Generate billing (skips already-billed
+                   period_start=nothing, period_end=nothing, force_rebill=false)  # iterations by default)
+quarter_bounds(q)                               # Date bounds for a "YYYY-Qn" label
 replicator_history(; email=nothing)             # Replicator's past work
 ```
 
