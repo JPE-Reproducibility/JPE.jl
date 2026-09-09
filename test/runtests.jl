@@ -31,4 +31,5 @@ end
     include("test_jpe_db.jl")
     include("test_gmailing.jl")
     include("test_actions.jl")
+    include("test_zip.jl")
 end
