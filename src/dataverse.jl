@@ -156,18 +156,21 @@ the user choose what to do before any extraction/hashing happens.
   means the user aborted.
 """
 function dv_prompt_large_folder_exclusions(package_path::String; max_pkg_size_gb::Real = 5.0, threshold_gb::Real = 1.0)
-    size_gb = disk_size_gb(package_path)
+    # Measure UNCOMPRESSED size when a zip is present — disk_size_gb on the zip
+    # itself only sees the compressed footprint, which can look small while the
+    # extracted content is many times larger (the exact way a 5GB threshold can
+    # silently pass through a package that fills the disk on extraction).
+    zips = filter(f -> isfile(f) && endswith(lowercase(f), ".zip"), readdir(package_path, join = true))
+    entries = length(zips) == 1 ? zip_entry_sizes(zips[1]) : nothing
+
+    size_gb = isnothing(entries) ? disk_size_gb(package_path) : sum(e.size for e in entries) / 1024^3
     size_gb <= max_pkg_size_gb && return String[]
 
-    @info "Package at $package_path is $(round(size_gb, digits=2)) GB (exceeds max_pkg_size_gb = $max_pkg_size_gb)."
+    @info "Package at $package_path is $(round(size_gb, digits=2)) GB uncompressed (exceeds max_pkg_size_gb = $max_pkg_size_gb)."
 
     while true
-        zips = filter(f -> isfile(f) && endswith(lowercase(f), ".zip"), readdir(package_path, join = true))
-        flagged = if length(zips) == 1
-            aggregate_dir_sizes(zip_entry_sizes(zips[1]); threshold_gb = threshold_gb)
-        else
-            dir_sizes_on_disk(package_path; threshold_gb = threshold_gb)
-        end
+        flagged = isnothing(entries) ? dir_sizes_on_disk(package_path; threshold_gb = threshold_gb) :
+                                        aggregate_dir_sizes(entries; threshold_gb = threshold_gb)
 
         if isempty(flagged)
             @info "No individual folder exceeds $threshold_gb GB — nothing to flag."
