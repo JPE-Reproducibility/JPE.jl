@@ -25,70 +25,74 @@ end
 
 
 """
-    read_and_unzip_directory(dir_path::String)
+    free_disk_space_gb(path::String)
 
-Read contents of a directory and unzip any .zip files using system unzip command.
-Extracts zip files to the same directory where they reside.
+Available disk space (GB) on the filesystem containing `path`, via `df -Pk`.
+"""
+function free_disk_space_gb(path::String)
+    out = read(`df -Pk $path`, String)
+    lines = split(strip(out), '\n')
+    length(lines) < 2 && error("free_disk_space_gb: unexpected `df` output for $path")
+    fields = split(lines[2])
+    length(fields) < 4 && error("free_disk_space_gb: could not parse `df` output for $path")
+    avail_kb = parse(Int, fields[4])
+    avail_kb / 1024^2
+end
 
-# Arguments
-- `dir_path::String`: Path to the directory to read
-- `exclude::Vector{String}`: relative paths (from the zip root) to skip during
-  extraction, e.g. `["PackageName/confidential-data-do-not-publish"]`. Each is
-  passed to `unzip -x` as `"<path>/*"`. Has no effect when the zip was already
-  extracted by a prior run — `local_file_md5s` is what guards against that case.
+"pure/testable: is `avail_gb` enough to extract something needing `needed_gb`, with a safety margin?"
+_enough_scratch_space(needed_gb::Real, avail_gb::Real; margin::Real = 1.05) = avail_gb >= needed_gb * margin
+
+"""
+    zip_extract_to_scratch(zip_path::String; exclude = String[])
+
+Extract `zip_path` in full to a fresh local scratch directory using `ditto`,
+then immediately delete any `exclude`d paths (relative to the archive root)
+before returning — excluded content is never hashed and sits on disk only for
+the duration of the extraction itself.
+
+`ditto` is used instead of `unzip` because Apple's bundled UnZip 6.00 cannot
+write filenames containing legacy (non-UTF8, e.g. CP850) byte sequences and
+aborts the *entire archive* rather than skipping the offending entry —
+confirmed against a real replication package where two accented-Spanish
+filenames caused `unzip` to fail with a misleading "disk full?" prompt on a
+machine that had 259GB genuinely free. `ditto` writes these files fine (it
+just displays the accented characters differently, which doesn't matter —
+file *content*, not display name, is what gets hashed).
+
+`ditto` has no exclude mechanism, which is why everything is extracted before
+trimming: this needs enough LOCAL scratch disk for the archive's full
+uncompressed size even when most of it will be deleted immediately after —
+checked up front against `free_disk_space_gb` so a huge confidential-only
+folder can't run the disk out of space here either.
 
 # Returns
-- `Vector{String}`: All file paths in the directory (after unzipping)
+- `String`: path to the scratch directory. Caller owns cleanup, e.g.
+  `rm(scratch; recursive=true, force=true)`.
 """
-function read_and_unzip_directory(dir_path::String; rm_zip = true, exclude::Vector{String} = String[])
-    # Check if directory exists
-    if !isdir(dir_path)
-        throw(ArgumentError("Directory does not exist: $dir_path"))
+function zip_extract_to_scratch(zip_path::String; exclude::Vector{String} = String[])
+    needed_gb = sum(e.size for e in zip_entry_sizes(zip_path)) / 1024^3
+
+    scratch = mktempdir()
+    avail_gb = free_disk_space_gb(scratch)
+    if !_enough_scratch_space(needed_gb, avail_gb)
+        rm(scratch, recursive = true, force = true)
+        error("zip_extract_to_scratch: need ~$(round(needed_gb, digits=2)) GB of local scratch disk to extract $zip_path, only $(round(avail_gb, digits=2)) GB free. Free up disk space before retrying.")
     end
 
-    # Get all files in directory
-    files = filter(isfile, readdir(dir_path, join=true))
+    println("Extracting (via ditto): $(basename(zip_path))")
+    run(pipeline(`ditto -x -k $zip_path $scratch`, devnull))
 
-    # Find zip files
-    zip_files = filter(f -> endswith(lowercase(f), ".zip"), files)
+    rm_git(scratch)
 
-    if length(zip_files) == 0
-        @warn "There are no zip files in this location."
-
-    end
-
-    exclude_patterns = [rstrip(e, '/') * "/*" for e in exclude]
-
-    # Unzip each zip file
-    for zip_file in zip_files
-        println("Unzipping: $(basename(zip_file))")
-
-        # Run system unzip command
-        # -o: overwrite files without prompting
-        # -d: extract to directory (same as zip file location)
-        # -x: exclude matching entries (only passed when non-empty; unzip errors on a bare -x)
-        extract_dir = joinpath(dirname(dirname(zip_file)), "replication-package")
-        if isempty(exclude_patterns)
-            run(pipeline(`unzip -oq $zip_file -d $extract_dir`, devnull))
-        else
-            @info "Excluding from extraction: $(exclude)"
-            run(pipeline(`unzip -oq $zip_file -d $extract_dir -x $exclude_patterns`, devnull))
-        end
-
-        # Remove any .git directories from extracted contents
-        if isdir(extract_dir)
-            rm_git(extract_dir)
+    for e in exclude
+        target = joinpath(scratch, e)
+        if ispath(target)
+            @info "Deleting excluded folder from scratch extraction: $e"
+            rm(target, recursive = true, force = true)
         end
     end
 
-    if rm_zip
-        rm.(zip_files, force = true)
-    end
-
-
-
-    # Return all files in directory after unzipping
-    return filter(isfile, readdir(dir_path, join=true))
+    scratch
 end
 
 """

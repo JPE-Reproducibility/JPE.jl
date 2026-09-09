@@ -43,45 +43,64 @@ function dv_get_publication_citation(meta::Dict)
 end
 
 """
-    local_file_md5s(root::String; exclude = String[])
+    _hash_tree(base::String; exclude_prefixes = String[])
 
-`exclude` is a list of paths relative to `root` (e.g.
-`["replication-package/PackageName/confidential-data-do-not-publish"]` made
-relative, i.e. `["PackageName/confidential-data-do-not-publish"]`) that are
-skipped during hashing regardless of whether they were actually extracted —
-this is what protects against a folder left over from a prior full unzip,
-not just the `unzip -x` at extraction time.
+Walk `base`, md5-hashing every file except `__MACOSX`/dotdirs, `.zip` files
+sitting directly in `base`, and anything under `exclude_prefixes` (absolute
+paths). Shared by both branches of [`local_file_md5s`](@ref) — hashing an
+in-place package and hashing a `zip_extract_to_scratch` scratch dir are the
+same walk, just rooted differently.
 """
-function local_file_md5s(root::String; exclude::Vector{String} = String[])
-    read_and_unzip_directory(root, rm_zip = false, exclude = exclude)
-
-    excluded_prefixes = [joinpath(root, e) for e in exclude]
-
+function _hash_tree(base::String; exclude_prefixes::Vector{String} = String[])
     result = Dict{String, @NamedTuple{path::String, basename::String}}()
-    for (dirpath, _, files) in walkdir(root)
-        # Skip __MACOSX and hidden directories
+    for (dirpath, _, files) in walkdir(base)
         if contains(dirpath, "__MACOSX") || any(startswith(p, ".") for p in splitpath(dirpath))
             continue
         end
-        # Skip explicitly excluded folders (confidential-data-style)
-        if any(p -> dirpath == p || startswith(dirpath, p * "/"), excluded_prefixes)
+        if any(p -> dirpath == p || startswith(dirpath, p * "/"), exclude_prefixes)
             continue
         end
 
         for file in files
-            fullpath = joinpath(dirpath, file)
-
-            # Skip zip files only at root level
-            if dirpath == root && endswith(file, ".zip")
+            if dirpath == base && endswith(file, ".zip")
                 continue
             end
-
-            relpath_ = relpath(fullpath, root)
+            fullpath = joinpath(dirpath, file)
+            relpath_ = relpath(fullpath, base)
             hash = bytes2hex(md5(read(fullpath)))
             result[hash] = (path = relpath_, basename = file)
         end
     end
-    return result
+    result
+end
+
+"""
+    local_file_md5s(root::String; exclude = String[])
+
+`exclude` is a list of paths relative to the archive root (e.g.
+`["PackageName/confidential-data-do-not-publish"]`) that are never hashed.
+
+When `root` contains exactly one `.zip`, it's extracted to a local scratch
+directory via [`zip_extract_to_scratch`](@ref) (which deletes `exclude`d
+folders immediately after extracting) — hashed alongside any loose files
+sitting next to the zip in `root` itself. Otherwise (0 or >1 zips — already
+unzipped, or a left-over from a prior run) `root` is hashed in place, with
+`exclude` applied directly against what's already on disk.
+"""
+function local_file_md5s(root::String; exclude::Vector{String} = String[])
+    zips = filter(f -> isfile(f) && endswith(lowercase(f), ".zip"), readdir(root, join = true))
+
+    if length(zips) == 1
+        scratch = zip_extract_to_scratch(zips[1]; exclude = exclude)
+        try
+            merge(_hash_tree(root), _hash_tree(scratch))
+        finally
+            rm(scratch, recursive = true, force = true)
+        end
+    else
+        length(zips) == 0 || @warn "local_file_md5s: expected exactly one zip in $root, found $(length(zips)) — hashing what's already on disk without extracting any of them."
+        _hash_tree(root; exclude_prefixes = [joinpath(root, e) for e in exclude])
+    end
 end
 
 function dv_check_replication_package(meta::Dict, local_root::String; exclude::Vector{String} = String[])

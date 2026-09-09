@@ -31,8 +31,14 @@
     @test "Pkg" in paths2
 end
 
-@testset "zip_entry_sizes + read_and_unzip_directory + local_file_md5s exclude" begin
-    workdir = mktempdir()
+@testset "_enough_scratch_space" begin
+    @test JPE._enough_scratch_space(10.0, 20.0) == true
+    @test JPE._enough_scratch_space(10.0, 10.0) == false   # margin not met
+    @test JPE._enough_scratch_space(10.0, 10.5) == true    # margin exactly met (10 * 1.05)
+    @test JPE._enough_scratch_space(10.0, 100.0; margin = 20.0) == false
+end
+
+function _make_test_package(workdir)
     src = joinpath(workdir, "src")
     mkpath(joinpath(src, "PackageName", "confidential-data-do-not-publish"))
     mkpath(joinpath(src, "PackageName", "code"))
@@ -41,18 +47,66 @@ end
 
     zip_path = joinpath(workdir, "pkg.zip")
     run(Cmd(`zip -rq $zip_path PackageName`, dir = src))
+    zip_path
+end
+
+@testset "zip_entry_sizes + aggregate_dir_sizes on a real zip" begin
+    workdir = mktempdir()
+    zip_path = _make_test_package(workdir)
 
     entries = JPE.zip_entry_sizes(zip_path)
     @test any(e -> e.path == "PackageName/code/main.R", entries)
     flagged = JPE.aggregate_dir_sizes(entries; threshold_gb = 0.0001)
     @test any(f -> f.path == "PackageName/confidential-data-do-not-publish", flagged)
+end
+
+@testset "zip_extract_to_scratch excludes before returning" begin
+    workdir = mktempdir()
+    zip_path = _make_test_package(workdir)
+
+    scratch = JPE.zip_extract_to_scratch(zip_path; exclude = ["PackageName/confidential-data-do-not-publish"])
+    try
+        @test isfile(joinpath(scratch, "PackageName", "code", "main.R"))
+        @test !ispath(joinpath(scratch, "PackageName", "confidential-data-do-not-publish"))
+    finally
+        rm(scratch, recursive = true, force = true)
+    end
+
+    # no exclude: everything present
+    scratch2 = JPE.zip_extract_to_scratch(zip_path)
+    try
+        @test isfile(joinpath(scratch2, "PackageName", "confidential-data-do-not-publish", "big.dat"))
+    finally
+        rm(scratch2, recursive = true, force = true)
+    end
+end
+
+@testset "local_file_md5s exclude, via zip_extract_to_scratch" begin
+    workdir = mktempdir()
+    zip_path = _make_test_package(workdir)
 
     root = joinpath(workdir, "replication-package")
     mkdir(root)
     cp(zip_path, joinpath(root, "pkg.zip"))
+    # a loose file sitting beside the zip (not inside it) should still be hashed
+    write(joinpath(root, "loose_readme.txt"), "hello")
 
     hashes = JPE.local_file_md5s(root; exclude = ["PackageName/confidential-data-do-not-publish"])
     paths = Set(v.path for v in values(hashes))
     @test "PackageName/code/main.R" in paths
+    @test "loose_readme.txt" in paths
     @test !any(p -> occursin("confidential-data-do-not-publish", p), paths)
+    # nothing left behind on disk from the scratch extraction
+    @test !ispath(joinpath(root, "PackageName"))
+end
+
+@testset "local_file_md5s with no zip falls back to hashing in place" begin
+    workdir = mktempdir()
+    root = joinpath(workdir, "already-extracted")
+    mkpath(joinpath(root, "sub"))
+    write(joinpath(root, "sub", "file.txt"), "content")
+
+    hashes = JPE.local_file_md5s(root)
+    paths = Set(v.path for v in values(hashes))
+    @test "sub/file.txt" in paths
 end
