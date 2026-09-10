@@ -1008,7 +1008,7 @@ contained in the dataset on dataverse
 # Returns
 - The updated paper information
 """
-function finalize_publication(paperID,doi; check_files = true)
+function finalize_publication(paperID,doi; check_files = true, max_pkg_size_gb = 5.0, folder_threshold_gb = 1.0)
 
     paper = db_filter_paper(paperID)
     if nrow(paper) == 1 && paper[1, :status] == "published_package"
@@ -1019,7 +1019,7 @@ function finalize_publication(paperID,doi; check_files = true)
     insert_package_doi!(paperID,doi)
 
     if check_files
-        dv_get_file_report(paperID)
+        dv_get_file_report(paperID; max_pkg_size_gb = max_pkg_size_gb, folder_threshold_gb = folder_threshold_gb)
     end
 
     println("log paper as accepted in database?")

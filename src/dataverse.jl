@@ -42,35 +42,70 @@ function dv_get_publication_citation(meta::Dict)
     return fields[pub_field]["value"][1]["publicationCitation"]["value"]
 end
 
-function local_file_md5s(root::String)
-    read_and_unzip_directory(root, rm_zip = false)
-    
+"""
+    _hash_tree(base::String; exclude_prefixes = String[])
+
+Walk `base`, md5-hashing every file except `__MACOSX`/dotdirs, `.zip` files
+sitting directly in `base`, and anything under `exclude_prefixes` (absolute
+paths). Shared by both branches of [`local_file_md5s`](@ref) — hashing an
+in-place package and hashing a `zip_extract_to_scratch` scratch dir are the
+same walk, just rooted differently.
+"""
+function _hash_tree(base::String; exclude_prefixes::Vector{String} = String[])
     result = Dict{String, @NamedTuple{path::String, basename::String}}()
-    for (dirpath, _, files) in walkdir(root)
-        # Skip __MACOSX and hidden directories
+    for (dirpath, _, files) in walkdir(base)
         if contains(dirpath, "__MACOSX") || any(startswith(p, ".") for p in splitpath(dirpath))
             continue
         end
-        
+        if any(p -> dirpath == p || startswith(dirpath, p * "/"), exclude_prefixes)
+            continue
+        end
+
         for file in files
-            fullpath = joinpath(dirpath, file)
-            
-            # Skip zip files only at root level
-            if dirpath == root && endswith(file, ".zip")
+            if dirpath == base && endswith(file, ".zip")
                 continue
             end
-            
-            relpath_ = relpath(fullpath, root)
+            fullpath = joinpath(dirpath, file)
+            relpath_ = relpath(fullpath, base)
             hash = bytes2hex(md5(read(fullpath)))
             result[hash] = (path = relpath_, basename = file)
         end
     end
-    return result
+    result
 end
 
-function dv_check_replication_package(meta::Dict, local_root::String)
+"""
+    local_file_md5s(root::String; exclude = String[])
+
+`exclude` is a list of paths relative to the archive root (e.g.
+`["PackageName/confidential-data-do-not-publish"]`) that are never hashed.
+
+When `root` contains exactly one `.zip`, it's extracted to a local scratch
+directory via [`zip_extract_to_scratch`](@ref) (which deletes `exclude`d
+folders immediately after extracting) — hashed alongside any loose files
+sitting next to the zip in `root` itself. Otherwise (0 or >1 zips — already
+unzipped, or a left-over from a prior run) `root` is hashed in place, with
+`exclude` applied directly against what's already on disk.
+"""
+function local_file_md5s(root::String; exclude::Vector{String} = String[])
+    zips = filter(f -> isfile(f) && endswith(lowercase(f), ".zip"), readdir(root, join = true))
+
+    if length(zips) == 1
+        scratch = zip_extract_to_scratch(zips[1]; exclude = exclude)
+        try
+            merge(_hash_tree(root), _hash_tree(scratch))
+        finally
+            rm(scratch, recursive = true, force = true)
+        end
+    else
+        length(zips) == 0 || @warn "local_file_md5s: expected exactly one zip in $root, found $(length(zips)) — hashing what's already on disk without extracting any of them."
+        _hash_tree(root; exclude_prefixes = [joinpath(root, e) for e in exclude])
+    end
+end
+
+function dv_check_replication_package(meta::Dict, local_root::String; exclude::Vector{String} = String[])
     dv_files  = dv_get_file_list(meta)
-    local_md5s = local_file_md5s(local_root)
+    local_md5s = local_file_md5s(local_root; exclude = exclude)
     dv_md5s = Dict(f.md5 => f.filename for f in dv_files)
 
     matched       = [(dv_name = dv_md5s[md5], local_path = info.path) 
@@ -90,13 +125,20 @@ function dv_check_replication_package(meta::Dict, local_root::String)
             only_dv = only_dv)
 end
 
-function dv_check_report(nt::NamedTuple)
+function dv_check_report(nt::NamedTuple; exclude::Vector{String} = String[])
 
     answer = 0
-    
+
     while answer < 6
+        exclude_note = isempty(exclude) ? "" : """
+
+        ⚠ PARTIAL CHECK — excluded from local hashing: $(join(exclude, ", "))
+        If any of these were deposited on Dataverse anyway, they will show up
+        below as "only on dv", not as a match — treat that bucket as the
+        safety net for this run, not as noise.
+        """
         @info """
-        File checks on dataverse report:
+        File checks on dataverse report:$(exclude_note)
         1. md5 and names matched: $(length(nt.matched))
         2. md5 matches, not name: $(length(nt.hash_match_name_mismatch))
         3. files existing only locally: $(length(nt.only_local))
@@ -119,7 +161,70 @@ function dv_check_report(nt::NamedTuple)
     end
 end
 
-function dv_get_file_report(paperID)
+"""
+    dv_prompt_large_folder_exclusions(package_path; max_pkg_size_gb = 5.0, threshold_gb = 1.0)
+
+Guard against unzipping a package too large for local disk. If `package_path`
+exceeds `max_pkg_size_gb`, lists folders at or above `threshold_gb` (from the
+zip listing if a zip is present, else from what's already on disk) and lets
+the user choose what to do before any extraction/hashing happens.
+
+# Returns
+- `Vector{String}`: paths (relative to `package_path`) to exclude from
+  extraction and hashing. Empty means "proceed with everything". `nothing`
+  means the user aborted.
+"""
+function dv_prompt_large_folder_exclusions(package_path::String; max_pkg_size_gb::Real = 5.0, threshold_gb::Real = 1.0)
+    # Measure UNCOMPRESSED size when a zip is present — disk_size_gb on the zip
+    # itself only sees the compressed footprint, which can look small while the
+    # extracted content is many times larger (the exact way a 5GB threshold can
+    # silently pass through a package that fills the disk on extraction).
+    zips = filter(f -> isfile(f) && endswith(lowercase(f), ".zip"), readdir(package_path, join = true))
+    entries = length(zips) == 1 ? zip_entry_sizes(zips[1]) : nothing
+
+    size_gb = isnothing(entries) ? disk_size_gb(package_path) : sum(e.size for e in entries) / 1024^3
+    size_gb <= max_pkg_size_gb && return String[]
+
+    @info "Package at $package_path is $(round(size_gb, digits=2)) GB uncompressed (exceeds max_pkg_size_gb = $max_pkg_size_gb)."
+
+    while true
+        flagged = isnothing(entries) ? dir_sizes_on_disk(package_path; threshold_gb = threshold_gb) :
+                                        aggregate_dir_sizes(entries; threshold_gb = threshold_gb)
+
+        if isempty(flagged)
+            @info "No individual folder exceeds $threshold_gb GB — nothing to flag."
+            return String[]
+        end
+
+        println("\nLarge folders found (>= $threshold_gb GB):")
+        for f in flagged
+            println("  $(round(f.size_gb, digits=2)) GB   $(f.path)")
+        end
+
+        menu = RadioMenu(["Unzip everything", "Exclude flagged folder(s)", "Browse full listing first", "Abort"])
+        choice = request(menu)
+
+        if choice == 1
+            return String[]
+        elseif choice == 2
+            if length(flagged) == 1
+                return [flagged[1].path]
+            else
+                select_menu = MultiSelectMenu([f.path for f in flagged])
+                selected = request(select_menu)
+                return [flagged[i].path for i in selected]
+            end
+        elseif choice == 3
+            browse_package_contents(package_path)
+            # loop back to the menu
+        else
+            @info "Aborted by user — no files extracted or hashed."
+            return nothing
+        end
+    end
+end
+
+function dv_get_file_report(paperID; max_pkg_size_gb::Real = 5.0, folder_threshold_gb::Real = 1.0)
     # get location of local repo
     paper = db_filter_paper(paperID)
     if nrow(paper) != 1
@@ -134,9 +239,12 @@ function dv_get_file_report(paperID)
     localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
     package_path = joinpath(localloc, "replication-package")
 
-    file_checks = dv_check_replication_package(dv_meta,package_path)
+    exclude = dv_prompt_large_folder_exclusions(package_path; max_pkg_size_gb = max_pkg_size_gb, threshold_gb = folder_threshold_gb)
+    isnothing(exclude) && return nothing
 
-    dv_check_report(file_checks)
+    file_checks = dv_check_replication_package(dv_meta, package_path; exclude = exclude)
+
+    dv_check_report(file_checks; exclude = exclude)
 end
 
 
