@@ -123,6 +123,9 @@ function with_jpe_test_db(f::Function; seed::Bool = true)
             date_assigned_repl      DATE,
             date_completed_repl     DATE,
             date_decision_de        DATE,
+            preprocess_mode         VARCHAR,
+            billed_at               TIMESTAMP,
+            billed_period           VARCHAR,
             timestamp               TIMESTAMP
         )
     """)
