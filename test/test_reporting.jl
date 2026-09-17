@@ -119,10 +119,16 @@ end
         df = JPE.dv_published_metrics_report()
         @test nrow(df) == 1
         @test df[1, :paper_id] == "77777704"
-        @test all(hasproperty(df, c) for c in (:paper_id, :paper_slug, :doi, :date_published, :views, :downloads))
+        @test all(hasproperty(df, c) for c in (:paper_id, :paper_slug, :doi, :date_published, :views, :views_unique, :downloads, :downloads_unique))
         @test df[1, :views] isa Integer
+        @test df[1, :views_unique] isa Integer
         @test df[1, :downloads] isa Integer
+        @test df[1, :downloads_unique] isa Integer
         @test df[1, :views] > 0
+        @test df[1, :views_unique] > 0
         @test df[1, :downloads] > 0
+        @test df[1, :downloads_unique] > 0
+        @test df[1, :views_unique] <= df[1, :views]
+        @test df[1, :downloads_unique] <= df[1, :downloads]
     end
 end

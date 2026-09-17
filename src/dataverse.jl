@@ -562,6 +562,14 @@ dv_downloads_total(package_doi::AbstractString; retries::Int = 4) =
 dv_views_total(package_doi::AbstractString; retries::Int = 4) =
     _dv_makedatacount_metric(package_doi, "viewsTotal"; retries)
 
+"unique-user download count for a dataverse dataset (Make Data Count; COUNTER double-click-filtered)"
+dv_downloads_unique(package_doi::AbstractString; retries::Int = 4) =
+    _dv_makedatacount_metric(package_doi, "downloadsUnique"; retries)
+
+"unique-user view count for a dataverse dataset (Make Data Count; COUNTER double-click-filtered)"
+dv_views_unique(package_doi::AbstractString; retries::Int = 4) =
+    _dv_makedatacount_metric(package_doi, "viewsUnique"; retries)
+
 "citation count for a journal article DOI, via OpenAlex"
 function openalex_citations(article_doi::AbstractString)
     url = "https://api.openalex.org/works/https://doi.org/$(article_doi)?mailto=jpe.dataeditor@gmail.com"
@@ -770,6 +778,13 @@ tracked in the JPE database — i.e. every `papers` row with
 [`dv_metrics_report`](@ref) (which crawls the whole Dataverse subtree and
 fuzzy-matches datasets to journal articles), this is sourced directly from
 the database's own `doi` field, so it needs no Crossref matching.
+
+Reports both the `Total` (all counted events) and `Unique` (distinct users,
+COUNTER double-click-filtered) variants of each metric — `Total` and
+`Unique` are already both bot-filtered per the COUNTER Code of Practice that
+Dataverse's Make Data Count implementation follows, so `Unique` isn't a
+"debottified" version of `Total`; it's a distinct-user count vs. an
+all-events count.
 """
 function dv_published_metrics_report(; save_csv::Bool = false, out_dir::String = joinpath(homedir(), "git", "jpe", "Reports", "data"))
     published = @chain db_df("papers") begin
@@ -779,7 +794,9 @@ function dv_published_metrics_report(; save_csv::Bool = false, out_dir::String =
     @info "$(nrow(published)) published packages with a doi found"
 
     views = Vector{Union{Int, Missing}}(missing, nrow(published))
+    views_unique = Vector{Union{Int, Missing}}(missing, nrow(published))
     downloads = Vector{Union{Int, Missing}}(missing, nrow(published))
+    downloads_unique = Vector{Union{Int, Missing}}(missing, nrow(published))
     for (i, r) in enumerate(eachrow(published))
         try
             views[i] = dv_views_total(r.doi)
@@ -788,14 +805,28 @@ function dv_published_metrics_report(; save_csv::Bool = false, out_dir::String =
         end
         sleep(0.3)
         try
+            views_unique[i] = dv_views_unique(r.doi)
+        catch e
+            @warn "unique views fetch failed for $(r.doi)" exception = e
+        end
+        sleep(0.3)
+        try
             downloads[i] = dv_downloads_total(r.doi)
         catch e
             @warn "downloads fetch failed for $(r.doi)" exception = e
         end
         sleep(0.3)
+        try
+            downloads_unique[i] = dv_downloads_unique(r.doi)
+        catch e
+            @warn "unique downloads fetch failed for $(r.doi)" exception = e
+        end
+        sleep(0.3)
     end
     published.views = views
+    published.views_unique = views_unique
     published.downloads = downloads
+    published.downloads_unique = downloads_unique
 
     pretty_table(published, header = names(published))
 
