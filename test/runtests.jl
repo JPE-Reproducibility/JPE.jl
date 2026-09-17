@@ -30,6 +30,7 @@ end
     include("test_dropbox.jl")
     include("test_jpe_db.jl")
     include("test_reporting.jl")
+    include("test_dataverse.jl")
     include("test_gmailing.jl")
     include("test_actions.jl")
     include("test_zip.jl")

@@ -48,6 +48,7 @@ JPE_DBOX_APP_SECRET # Dropbox app secret
 JPE_DBOX_APP_REFRESH# Dropbox refresh token (long-lived)
 JPE_DV              # Dataverse API token
 JULIA_RUNNER_ENV    # Path to Julia environment used for local preprocessing
+DV_DEMO_API         # API token for demo.dataverse.org (optional; testing Dataverse writes only)
 ```
 
 `JPE_TEST=1` activates test mode (suppresses certain side effects).

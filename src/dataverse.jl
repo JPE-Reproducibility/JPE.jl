@@ -4,6 +4,9 @@
 
 dvserver() = "https://dataverse.harvard.edu"
 
+"demo.dataverse.org sandbox instance — used to test write operations (e.g. file replace) without touching production data; pair with dvdemotoken()"
+dvdemoserver() = "https://demo.dataverse.org"
+
 
 """
 Get all metadata associated to a dataverse dataset
@@ -484,12 +487,12 @@ function dv_get_versions(doi)
 end
 
 "get list of all files in a dataset"
-function dv_get_dataset_files(persistent_id::String)
-    url = "$(dvserver())/api/datasets/:persistentId/versions/:latest/files?persistentId=$(persistent_id)"
-    headers = Dict("X-Dataverse-key" => dvtoken())
+function dv_get_dataset_files(persistent_id::String; base_url::String = dvserver(), api_token::String = dvtoken())
+    url = "$(base_url)/api/datasets/:persistentId/versions/:latest/files?persistentId=$(persistent_id)"
+    headers = Dict("X-Dataverse-key" => api_token)
     response = HTTP.get(url, headers)
-    result = JSON.read(response.body, Dict)
-    
+    result = JSON.parse(String(response.body))
+
     if result["status"] == "OK"
         return result["data"]
     else
@@ -854,6 +857,189 @@ function dv_published_metrics_report(; save_csv::Bool = false, out_dir::String =
     end
 
     published
+end
+
+# ─────────────────────────────────────────────────────────────────────────
+# Replacing files on an existing (possibly published) deposit — moves the
+# dataset back to draft, same as the "Replace" button in the Dataverse UI.
+# Verified empirically against demo.dataverse.org: the replace endpoint does
+# NOT carry over directoryLabel/description/categories from the file being
+# replaced — they silently reset to root/blank unless explicitly re-sent in
+# jsonData. This module therefore always reads them from the current file
+# and re-sends them.
+# ─────────────────────────────────────────────────────────────────────────
+
+"""
+    _dv_resolve_replacements(doi, replacements; base_url, api_token)
+
+Match each `old_name => new_local_path` pair in `replacements` against the
+dataset's current file list. `old_name` may be a bare filename (must be
+unique in the dataset) or `"directoryLabel/filename"` to disambiguate.
+
+Returns a `DataFrame` with one row per requested replacement — `file_id`,
+`directory_label`, `description`, `categories`, `dv_md5`, `local_md5`,
+`local_size` are `missing` and `status` explains why whenever a row fails
+to resolve. Nothing is written to Dataverse at this stage.
+"""
+function _dv_resolve_replacements(doi::AbstractString, replacements::AbstractDict{<:AbstractString, <:AbstractString};
+                                   base_url::String = dvserver(), api_token::String = dvtoken())
+    files = dv_get_dataset_files(doi; base_url, api_token)
+
+    by_full = Dict{String, Any}()
+    by_base = Dict{String, Vector{Any}}()
+    for f in files
+        dirlabel = get(f, "directoryLabel", "")
+        fname = f["dataFile"]["filename"]
+        full = isempty(dirlabel) ? fname : "$(dirlabel)/$(fname)"
+        by_full[full] = f
+        push!(get!(by_base, fname, Any[]), f)
+    end
+
+    rows = NamedTuple[]
+    for (old_name, new_path) in replacements
+        f = nothing
+        status = "ok"
+        if haskey(by_full, old_name)
+            f = by_full[old_name]
+        elseif haskey(by_base, old_name)
+            matches = by_base[old_name]
+            if length(matches) == 1
+                f = matches[1]
+            else
+                dirs = join([get(m, "directoryLabel", "") for m in matches], ", ")
+                status = "ambiguous — matches $(length(matches)) files in: $dirs — qualify as \"directoryLabel/filename\""
+            end
+        else
+            status = "not found in dataset"
+        end
+
+        if status == "ok" && !isfile(new_path)
+            status = "local file not found: $new_path"
+        elseif status == "ok" && filesize(new_path) == 0
+            status = "local file is empty: $new_path"
+        end
+
+        if status == "ok"
+            push!(rows, (
+                old_name = old_name,
+                new_path = new_path,
+                file_id = f["dataFile"]["id"],
+                directory_label = get(f, "directoryLabel", ""),
+                description = get(f, "description", ""),
+                categories = get(f, "categories", String[]),
+                dv_md5 = f["dataFile"]["md5"],
+                local_md5 = bytes2hex(md5(read(new_path))),
+                local_size = filesize(new_path),
+                status = status,
+            ))
+        else
+            push!(rows, (
+                old_name = old_name,
+                new_path = new_path,
+                file_id = missing,
+                directory_label = missing,
+                description = missing,
+                categories = missing,
+                dv_md5 = missing,
+                local_md5 = missing,
+                local_size = missing,
+                status = status,
+            ))
+        end
+    end
+    DataFrame(rows)
+end
+
+"""
+    dv_replace_files(doi, replacements; dry_run = true, base_url = dvserver(), api_token = dvtoken(), force_replace = false, sleep_between = 0.5)
+
+Replace one or more files on an existing Dataverse deposit, keyed off the
+current filename (or `"directoryLabel/filename"` if the bare name is
+ambiguous) — matching the "Replace" button in the Dataverse UI, including
+moving a published dataset back to draft. Never publishes.
+
+`replacements` maps `old_name => new_local_path`.
+
+# Keyword arguments
+- `dry_run::Bool=true`: when true (default), resolves and validates every
+  requested replacement and returns the plan as a DataFrame — nothing is
+  written to Dataverse. Pass `dry_run=false` to actually execute.
+- `base_url`/`api_token`: default to production Harvard Dataverse. Pass
+  `base_url=dvdemoserver(), api_token=dvdemotoken()` to test against the
+  demo sandbox instead.
+- `force_replace::Bool=false`: passed through as Dataverse's `forceReplace`
+  — set true only if you expect (and accept) a mimetype change.
+
+Rows that fail validation (file not found, ambiguous name, missing local
+file) are reported but never attempted, even with `dry_run=false`.
+"""
+function dv_replace_files(doi::AbstractString, replacements::AbstractDict{<:AbstractString, <:AbstractString};
+                           dry_run::Bool = true, base_url::String = dvserver(), api_token::String = dvtoken(),
+                           force_replace::Bool = false, sleep_between::Real = 0.5)
+    plan = _dv_resolve_replacements(doi, replacements; base_url, api_token)
+    pretty_table(plan, header = names(plan))
+
+    n_errors = count(!=("ok"), plan.status)
+    n_errors > 0 && @warn "$n_errors of $(nrow(plan)) replacement(s) failed validation and will be skipped."
+
+    if dry_run
+        @info "dry_run=true — nothing written. Re-run with dry_run=false to execute the $(nrow(plan) - n_errors) valid replacement(s)."
+        return plan
+    end
+
+    headers = Dict("X-Dataverse-key" => api_token)
+    result_status = Vector{String}(undef, nrow(plan))
+    directory_ok  = Vector{Union{Bool,Missing}}(missing, nrow(plan))
+    md5_ok        = Vector{Union{Bool,Missing}}(missing, nrow(plan))
+
+    for (i, r) in enumerate(eachrow(plan))
+        if r.status != "ok"
+            result_status[i] = "skipped: $(r.status)"
+            continue
+        end
+
+        json_data = Dict{String, Any}(
+            "description" => r.description,
+            "categories" => r.categories,
+            "forceReplace" => force_replace,
+        )
+        isempty(r.directory_label) || (json_data["directoryLabel"] = r.directory_label)
+
+        io = open(r.new_path)
+        try
+            form = HTTP.Form(Dict(
+                "file" => HTTP.Multipart(basename(r.new_path), io, "application/octet-stream"),
+                "jsonData" => JSON.json(json_data),
+            ))
+            resp = HTTP.post("$(base_url)/api/files/$(r.file_id)/replace", headers, form; status_exception = false, retry = false)
+            body = JSON.parse(String(resp.body))
+
+            if resp.status == 200 && body["status"] == "OK"
+                new_file = body["data"]["files"][1]
+                directory_ok[i] = get(new_file, "directoryLabel", "") == r.directory_label
+                md5_ok[i] = new_file["dataFile"]["md5"] == r.local_md5
+                result_status[i] = "ok"
+            else
+                result_status[i] = "API error ($(resp.status)): $(get(body, "message", String(resp.body)))"
+            end
+        catch e
+            result_status[i] = "exception: $e"
+        finally
+            close(io)
+        end
+
+        sleep(sleep_between)
+    end
+
+    plan.result = result_status
+    plan.directory_label_verified = directory_ok
+    plan.md5_verified = md5_ok
+
+    pretty_table(plan, header = names(plan))
+    n_ok = count(==("ok"), result_status)
+    @info "$n_ok of $(nrow(plan)) replacement(s) succeeded. Dataset is now in draft — review and publish manually when ready."
+
+    plan
 end
 
 # z =JPE.dv_get_dataset_metadata("doi:10.7910/DVN/VXR3XB")

@@ -84,6 +84,9 @@ const DB_CONNECTION = Ref{Union{Nothing, Any}}(nothing)
 # dataverse token
 dvtoken() = ENV["JPE_DV"]
 
+"API token for the demo.dataverse.org sandbox instance, used to test write operations (e.g. file replace) without touching production data"
+dvdemotoken() = ENV["DV_DEMO_API"]
+
 # const con = DBInterface.connect(DuckDB.DB, _DB_PATH)
 
 # if needed
