@@ -667,6 +667,10 @@ function replicator_hours_worked()
         # make a case id
         transform([:journal,:paper_slug, :round] => ByRow((x,y,z) -> get_case_id(x,y,z, fpath = false)) => :case_id)
         transform([:date_assigned_repl, :date_completed_repl] => ByRow((x,y) -> y - x) => :days_taken )
+        # hours1/hours2 come back from DuckDB's NUMERIC type as FixedPointDecimals.FixedDecimal,
+        # which RCall can't convert (sexpclass has no method for it) - normalize to Float64 here
+        # so nothing downstream (billing, budget tables, R writes) has to deal with it.
+        transform([:hours1, :hours2] .=> ByRow(passmissing(Float64)) .=> [:hours1, :hours2])
         # take care of 2-replicator cases
         select(:date_completed_repl, :days_taken, :replicator1, :replicator2, :hours1, :hours2, :case_id, :comments,
                :paper_id, :round, :billed_at, :billed_period)
