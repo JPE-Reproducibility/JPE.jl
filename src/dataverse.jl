@@ -532,26 +532,35 @@ end
 # ─────────────────────────────────────────────────────────────────────────
 
 """
-    dv_downloads_total(package_doi; retries = 4)
+    _dv_makedatacount_metric(package_doi, metric; retries = 4)
 
-Cumulative download count for a dataverse dataset (Make Data Count). Harvard
-Dataverse's load balancer throttles rapid back-to-back requests with a bare
-403 (no Retry-After header), so this retries with exponential backoff.
+Fetch a single Make Data Count metric (`"downloadsTotal"` or `"viewsTotal"`)
+for a dataverse dataset. Harvard Dataverse's load balancer throttles rapid
+back-to-back requests with a bare 403 (no Retry-After header), so this
+retries with exponential backoff.
 """
-function dv_downloads_total(package_doi::AbstractString; retries::Int = 4)
-    url = "$(dvserver())/api/datasets/:persistentId/makeDataCount/downloadsTotal?persistentId=$(package_doi)"
+function _dv_makedatacount_metric(package_doi::AbstractString, metric::AbstractString; retries::Int = 4)
+    url = "$(dvserver())/api/datasets/:persistentId/makeDataCount/$(metric)?persistentId=$(package_doi)"
     headers = Dict("X-Dataverse-key" => dvtoken())
     for attempt in 1:retries
         try
             response = HTTP.get(url, headers)
             result = JSON.parse(String(response.body))
-            return result["data"]["downloadsTotal"]
+            return result["data"][metric]
         catch e
             attempt == retries && rethrow(e)
             sleep(2.0 * attempt)
         end
     end
 end
+
+"cumulative download count for a dataverse dataset (Make Data Count)"
+dv_downloads_total(package_doi::AbstractString; retries::Int = 4) =
+    _dv_makedatacount_metric(package_doi, "downloadsTotal"; retries)
+
+"cumulative view count for a dataverse dataset (Make Data Count)"
+dv_views_total(package_doi::AbstractString; retries::Int = 4) =
+    _dv_makedatacount_metric(package_doi, "viewsTotal"; retries)
 
 "citation count for a journal article DOI, via OpenAlex"
 function openalex_citations(article_doi::AbstractString)
@@ -750,6 +759,54 @@ function dv_metrics_report(; write_csv = true, out_dir = joinpath(homedir(), "gi
     end
 
     df
+end
+
+"""
+    dv_published_metrics_report(; save_csv = false, out_dir = joinpath(homedir(), "git", "jpe", "Reports", "data"))
+
+Views and downloads (Make Data Count) for every published replication package
+tracked in the JPE database — i.e. every `papers` row with
+`status == "published_package"` and a non-missing `doi`. Unlike
+[`dv_metrics_report`](@ref) (which crawls the whole Dataverse subtree and
+fuzzy-matches datasets to journal articles), this is sourced directly from
+the database's own `doi` field, so it needs no Crossref matching.
+"""
+function dv_published_metrics_report(; save_csv::Bool = false, out_dir::String = joinpath(homedir(), "git", "jpe", "Reports", "data"))
+    published = @chain db_df("papers") begin
+        subset(:status => ByRow(==("published_package")), :doi => ByRow(!ismissing))
+        select(:paper_id, :paper_slug, :doi, :date_published)
+    end
+    @info "$(nrow(published)) published packages with a doi found"
+
+    views = Vector{Union{Int, Missing}}(missing, nrow(published))
+    downloads = Vector{Union{Int, Missing}}(missing, nrow(published))
+    for (i, r) in enumerate(eachrow(published))
+        try
+            views[i] = dv_views_total(r.doi)
+        catch e
+            @warn "views fetch failed for $(r.doi)" exception = e
+        end
+        sleep(0.3)
+        try
+            downloads[i] = dv_downloads_total(r.doi)
+        catch e
+            @warn "downloads fetch failed for $(r.doi)" exception = e
+        end
+        sleep(0.3)
+    end
+    published.views = views
+    published.downloads = downloads
+
+    pretty_table(published, header = names(published))
+
+    if save_csv
+        mkpath(out_dir)
+        path = joinpath(out_dir, "dataverse_published_metrics_$(Dates.format(today(), "yyyy-mm-dd")).csv")
+        CSV.write(path, published)
+        @info "wrote $path"
+    end
+
+    published
 end
 
 # z =JPE.dv_get_dataset_metadata("doi:10.7910/DVN/VXR3XB")

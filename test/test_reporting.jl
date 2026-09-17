@@ -82,3 +82,47 @@ end
         @test Set(forced.paper_id) == Set(["77777701", "77777702", "77777703"])
     end
 end
+
+@testset "dv_published_metrics_report" begin
+    with_jpe_test_db(seed = false) do
+        JPE.robust_db_operation() do con
+            # published package with a real, known doi (used elsewhere in the
+            # codebase as the dv_get_dataset_metadata docstring example)
+            DBInterface.execute(con, """
+                INSERT INTO papers (
+                    paper_id, journal, paper_slug, status, doi, date_published
+                ) VALUES (
+                    '77777704', 'JPE', 'Author-77777704', 'published_package',
+                    'doi:10.7910/DVN/VXR3XB', '2024-01-01'
+                )
+            """)
+            # published package with no doi yet — should be excluded
+            DBInterface.execute(con, """
+                INSERT INTO papers (
+                    paper_id, journal, paper_slug, status, doi, date_published
+                ) VALUES (
+                    '77777705', 'JPE', 'Author-77777705', 'published_package',
+                    NULL, '2024-01-01'
+                )
+            """)
+            # unpublished package with a doi — should be excluded
+            DBInterface.execute(con, """
+                INSERT INTO papers (
+                    paper_id, journal, paper_slug, status, doi
+                ) VALUES (
+                    '77777706', 'JPE', 'Author-77777706', 'with_replicator',
+                    'doi:10.7910/DVN/VXR3XB'
+                )
+            """)
+        end
+
+        df = JPE.dv_published_metrics_report()
+        @test nrow(df) == 1
+        @test df[1, :paper_id] == "77777704"
+        @test all(hasproperty(df, c) for c in (:paper_id, :paper_slug, :doi, :date_published, :views, :downloads))
+        @test df[1, :views] isa Integer
+        @test df[1, :downloads] isa Integer
+        @test df[1, :views] > 0
+        @test df[1, :downloads] > 0
+    end
+end
