@@ -958,7 +958,11 @@ current filename (or `"directoryLabel/filename"` if the bare name is
 ambiguous) — matching the "Replace" button in the Dataverse UI, including
 moving a published dataset back to draft. Never publishes.
 
-`replacements` maps `old_name => new_local_path`.
+`replacements` maps `old_name => new_local_path`. Note that Dataverse takes
+the file's displayed filename from the *new* upload, not the old one — if
+`basename(new_local_path)` differs from `old_name`'s filename, the file
+will show up under the new name after replacement (directoryLabel is still
+preserved regardless).
 
 # Keyword arguments
 - `dry_run::Bool=true`: when true (default), resolves and validates every
@@ -1038,6 +1042,156 @@ function dv_replace_files(doi::AbstractString, replacements::AbstractDict{<:Abst
     pretty_table(plan, header = names(plan))
     n_ok = count(==("ok"), result_status)
     @info "$n_ok of $(nrow(plan)) replacement(s) succeeded. Dataset is now in draft — review and publish manually when ready."
+
+    plan
+end
+
+"""
+    _dv_resolve_additions(doi, additions; base_url, api_token)
+
+Validate each `relative_path => new_local_path` pair in `additions` before
+adding it to `doi` as a brand-new file. `relative_path` (e.g.
+`"outputs/stats/foo.csv"`) determines the file's `directoryLabel` (the
+directory portion) and its filename. Refuses (with a clear `status`) any
+path that already exists in the dataset — that's what
+[`dv_replace_files`](@ref) is for — or whose local file is missing/empty.
+Nothing is written to Dataverse at this stage.
+"""
+function _dv_resolve_additions(doi::AbstractString, additions::AbstractDict{<:AbstractString, <:AbstractString};
+                                base_url::String = dvserver(), api_token::String = dvtoken())
+    files = dv_get_dataset_files(doi; base_url, api_token)
+    existing = Set{String}()
+    for f in files
+        dirlabel = get(f, "directoryLabel", "")
+        fname = f["dataFile"]["filename"]
+        push!(existing, isempty(dirlabel) ? fname : "$(dirlabel)/$(fname)")
+    end
+
+    rows = NamedTuple[]
+    for (rel_path, new_path) in additions
+        status = "ok"
+        if rel_path in existing
+            status = "already exists in dataset — use dv_replace_files instead"
+        elseif !isfile(new_path)
+            status = "local file not found: $new_path"
+        elseif filesize(new_path) == 0
+            status = "local file is empty: $new_path"
+        end
+
+        dirlabel = dirname(rel_path)
+        fname = basename(rel_path)
+
+        if status == "ok"
+            push!(rows, (
+                rel_path = rel_path,
+                new_path = new_path,
+                directory_label = dirlabel,
+                filename = fname,
+                local_md5 = bytes2hex(md5(read(new_path))),
+                local_size = filesize(new_path),
+                status = status,
+            ))
+        else
+            push!(rows, (
+                rel_path = rel_path,
+                new_path = new_path,
+                directory_label = missing,
+                filename = missing,
+                local_md5 = missing,
+                local_size = missing,
+                status = status,
+            ))
+        end
+    end
+    DataFrame(rows)
+end
+
+"""
+    dv_add_files(doi, additions; dry_run = true, base_url = dvserver(), api_token = dvtoken(), sleep_between = 0.5)
+
+Add one or more brand-new files to an existing Dataverse deposit (as
+opposed to [`dv_replace_files`](@ref), which swaps the content of a file
+that's already there). `additions` maps `relative_path => new_local_path`,
+e.g. `"outputs/stats/table4_metadata.csv" => "/local/.../table4_metadata.csv"`
+— the directory portion of `relative_path` becomes the file's
+`directoryLabel`. Moves a published dataset back to draft, same as
+[`dv_replace_files`](@ref). Never publishes.
+
+# Keyword arguments
+- `dry_run::Bool=true`: when true (default), resolves and validates every
+  requested addition and returns the plan as a DataFrame — nothing is
+  written to Dataverse. Pass `dry_run=false` to actually execute.
+- `base_url`/`api_token`: default to production Harvard Dataverse. Pass
+  `base_url=dvdemoserver(), api_token=dvdemotoken()` to test against the
+  demo sandbox instead.
+
+Rows that fail validation (already exists, missing local file) are
+reported but never attempted, even with `dry_run=false`.
+"""
+function dv_add_files(doi::AbstractString, additions::AbstractDict{<:AbstractString, <:AbstractString};
+                       dry_run::Bool = true, base_url::String = dvserver(), api_token::String = dvtoken(),
+                       sleep_between::Real = 0.5)
+    plan = _dv_resolve_additions(doi, additions; base_url, api_token)
+    pretty_table(plan, header = names(plan))
+
+    n_errors = count(!=("ok"), plan.status)
+    n_errors > 0 && @warn "$n_errors of $(nrow(plan)) addition(s) failed validation and will be skipped."
+
+    if dry_run
+        @info "dry_run=true — nothing written. Re-run with dry_run=false to execute the $(nrow(plan) - n_errors) valid addition(s)."
+        return plan
+    end
+
+    headers = Dict("X-Dataverse-key" => api_token)
+    result_status = Vector{String}(undef, nrow(plan))
+    new_file_id   = Vector{Union{Int,Missing}}(missing, nrow(plan))
+    directory_ok  = Vector{Union{Bool,Missing}}(missing, nrow(plan))
+    md5_ok        = Vector{Union{Bool,Missing}}(missing, nrow(plan))
+
+    for (i, r) in enumerate(eachrow(plan))
+        if r.status != "ok"
+            result_status[i] = "skipped: $(r.status)"
+            continue
+        end
+
+        json_data = Dict{String, Any}("description" => "")
+        isempty(r.directory_label) || (json_data["directoryLabel"] = r.directory_label)
+
+        io = open(r.new_path)
+        try
+            form = HTTP.Form(Dict(
+                "file" => HTTP.Multipart(r.filename, io, "application/octet-stream"),
+                "jsonData" => JSON.json(json_data),
+            ))
+            resp = HTTP.post("$(base_url)/api/datasets/:persistentId/add?persistentId=$(doi)", headers, form; status_exception = false, retry = false)
+            body = JSON.parse(String(resp.body))
+
+            if resp.status == 200 && body["status"] == "OK"
+                new_file = body["data"]["files"][1]
+                new_file_id[i] = new_file["dataFile"]["id"]
+                directory_ok[i] = get(new_file, "directoryLabel", "") == r.directory_label
+                md5_ok[i] = new_file["dataFile"]["md5"] == r.local_md5
+                result_status[i] = "ok"
+            else
+                result_status[i] = "API error ($(resp.status)): $(get(body, "message", String(resp.body)))"
+            end
+        catch e
+            result_status[i] = "exception: $e"
+        finally
+            close(io)
+        end
+
+        sleep(sleep_between)
+    end
+
+    plan.new_file_id = new_file_id
+    plan.result = result_status
+    plan.directory_label_verified = directory_ok
+    plan.md5_verified = md5_ok
+
+    pretty_table(plan, header = names(plan))
+    n_ok = count(==("ok"), result_status)
+    @info "$n_ok of $(nrow(plan)) addition(s) succeeded. Dataset is now in draft — review and publish manually when ready."
 
     plan
 end

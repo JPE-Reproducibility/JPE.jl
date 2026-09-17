@@ -3,6 +3,8 @@ using Test
 using DataFrames
 using DuckDB
 using Dates
+using HTTP
+using JSON
 
 # Test database configuration
 const TEST_DB_PATH = "/Users/floswald/JPE/jpe_test.duckdb"  # Separate test database
