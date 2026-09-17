@@ -119,7 +119,7 @@ end
         df = JPE.dv_published_metrics_report()
         @test nrow(df) == 1
         @test df[1, :paper_id] == "77777704"
-        @test all(hasproperty(df, c) for c in (:paper_id, :paper_slug, :doi, :date_published, :views, :views_unique, :downloads, :downloads_unique))
+        @test all(hasproperty(df, c) for c in (:paper_id, :paper_slug, :doi, :date_published, :views, :views_unique, :downloads, :downloads_unique, :views_retry_ratio, :downloads_retry_ratio))
         @test df[1, :views] isa Integer
         @test df[1, :views_unique] isa Integer
         @test df[1, :downloads] isa Integer
@@ -130,5 +130,16 @@ end
         @test df[1, :downloads_unique] > 0
         @test df[1, :views_unique] <= df[1, :views]
         @test df[1, :downloads_unique] <= df[1, :downloads]
+        @test df[1, :views_retry_ratio] ≈ df[1, :views] / df[1, :views_unique] atol = 0.05
+        @test df[1, :downloads_retry_ratio] ≈ df[1, :downloads] / df[1, :downloads_unique] atol = 0.05
+        @test df[1, :views_retry_ratio] >= 1.0
+        @test df[1, :downloads_retry_ratio] >= 1.0
     end
+end
+
+@testset "_dv_retry_ratio" begin
+    @test JPE._dv_retry_ratio(100, 20) == 5.0
+    @test ismissing(JPE._dv_retry_ratio(missing, 20))
+    @test ismissing(JPE._dv_retry_ratio(100, missing))
+    @test ismissing(JPE._dv_retry_ratio(0, 0))
 end

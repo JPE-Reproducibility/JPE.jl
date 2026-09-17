@@ -770,6 +770,17 @@ function dv_metrics_report(; write_csv = true, out_dir = joinpath(homedir(), "gi
 end
 
 """
+    _dv_retry_ratio(total, unique)
+
+`total / unique`, i.e. how many counted events per distinct user — a rough
+proxy for how much retry friction (e.g. Dataverse's download page getting
+stuck and users retrying) inflates the `Total` metric relative to genuine
+unique engagement. `missing` if either input is `missing` or `unique == 0`.
+"""
+_dv_retry_ratio(total, unique) =
+    (ismissing(total) || ismissing(unique) || unique == 0) ? missing : total / unique
+
+"""
     dv_published_metrics_report(; save_csv = false, out_dir = joinpath(homedir(), "git", "jpe", "Reports", "data"))
 
 Views and downloads (Make Data Count) for every published replication package
@@ -784,7 +795,10 @@ COUNTER double-click-filtered) variants of each metric — `Total` and
 `Unique` are already both bot-filtered per the COUNTER Code of Practice that
 Dataverse's Make Data Count implementation follows, so `Unique` isn't a
 "debottified" version of `Total`; it's a distinct-user count vs. an
-all-events count.
+all-events count. Also reports `views_retry_ratio`/`downloads_retry_ratio`
+(`Total / Unique`) as a rough proxy for retry friction — e.g. Dataverse's
+download page getting stuck and users repeatedly retrying inflates `Total`
+without adding real readers.
 """
 function dv_published_metrics_report(; save_csv::Bool = false, out_dir::String = joinpath(homedir(), "git", "jpe", "Reports", "data"))
     published = @chain db_df("papers") begin
@@ -827,6 +841,8 @@ function dv_published_metrics_report(; save_csv::Bool = false, out_dir::String =
     published.views_unique = views_unique
     published.downloads = downloads
     published.downloads_unique = downloads_unique
+    published.views_retry_ratio = round.(_dv_retry_ratio.(views, views_unique), digits = 1)
+    published.downloads_retry_ratio = round.(_dv_retry_ratio.(downloads, downloads_unique), digits = 1)
 
     pretty_table(published, header = names(published))
 
