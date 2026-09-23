@@ -115,6 +115,13 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     # add a run badge to the README and change title
     update_readme(joinpath(repoloc,"README.md"), r.gh_org_repo, "# $(get_case_id(r.journal, r.paper_slug, r.round))")
 
+    # Keep this repo's report template & CI workflow current with JPEtemplate.
+    # Paper repos are only templated once, at creation (`gh repo create
+    # --template ...`), and every subsequent round branches off the
+    # *previous* round's branch, never off JPEtemplate again -- so without
+    # this, template fixes never reach an already-created paper.
+    sync_template_files!(repoloc)
+
     # Create runner script
     write_runner_script(repoloc, no_data_scan, run_checks = run_checks)
 
@@ -217,7 +224,31 @@ function update_readme(filepath::String, gh_org_repo::String, new_header::String
 
 end
 
+"""
+    sync_template_files!(repoloc::String)
 
+Overwrite `TEMPLATE.qmd` and `.github/workflows/precheck.yml` in `repoloc`
+with the current versions from `JPE-Reproducibility/JPEtemplate` main, via
+the GitHub API (so it works the same whether run locally or on the
+self-hosted runner, no local JPEtemplate clone required).
+
+Best-effort: a fetch failure (e.g. transient network issue) is warned and
+skipped per-file rather than aborting preprocessing, since the fallback is
+simply the status quo (whatever version the repo already has).
+"""
+function sync_template_files!(repoloc::String)
+    for relpath in ("TEMPLATE.qmd", joinpath(".github", "workflows", "precheck.yml"))
+        try
+            content = read(`gh api -H "Accept: application/vnd.github.raw" repos/JPE-Reproducibility/JPEtemplate/contents/$relpath`, String)
+            destpath = joinpath(repoloc, relpath)
+            mkpath(dirname(destpath))
+            write(destpath, content)
+            @info "✓ Synced $relpath from JPEtemplate main"
+        catch e
+            @warn "Could not sync $relpath from JPEtemplate main — leaving existing version in place" exception=e
+        end
+    end
+end
 
 """
 Write the runner_precheck.jl script to the repository location.
