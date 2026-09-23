@@ -670,7 +670,7 @@ function gmail_s3_request_body(first,paperID,title)
     <i>Notice the script works only for the next 7 days!</i>
     <br>
     <br>
-    I'm looking forward to receiving your replication package. 
+    I'm looking forward to receiving your replication package.
     <br>
     <br>
 
@@ -679,4 +679,50 @@ function gmail_s3_request_body(first,paperID,title)
     """
 
     string(m1,signature())
+end
+
+"""
+    generic_email(paper_id::String)
+
+Create a Gmail draft with a generic templated message about `paper_id`.
+Looks up the paper's title and author email(s) in the database and addresses
+the primary author by first name only -- the second author's first name is
+never captured anywhere in this schema, only their email (see
+`email_of_second_author`), so they're included as a recipient but not named
+in the greeting. Leaves a placeholder in the body for the actual message,
+to be filled in before sending the draft.
+"""
+function generic_email(paper_id::String)
+    r = db_filter_paper(paper_id)
+    nrow(r) == 1 || error("Paper ID $paper_id not found or has multiple entries")
+    r = r[1, :]
+
+    email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author
+    to = isnothing(email2) ? [author_email(r.email_of_author)] : [author_email(r.email_of_author), author_email(email2)]
+
+    body = generic_email_body(r.firstname_of_author, paper_id, r.title)
+
+    gmail_draft(
+        to,
+        "Message about your paper $paper_id",
+        body,
+        []
+    )
+end
+
+function generic_email_body(first, paper_id, title)
+    m1 = """
+    Dear $first,
+    <br>
+    <br>
+    I am writing in relation to your paper with ID $paper_id, titled "$title".
+    <br>
+    <br>
+    [INSERT YOUR MESSAGE HERE]
+    <br>
+    <br>
+    With kind regards,
+    """
+
+    string(m1, signature())
 end
