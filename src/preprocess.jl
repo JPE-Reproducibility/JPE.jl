@@ -160,6 +160,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         commit_msg = run_checks ? "🚀 prechecks round $(round)" : "📁 setup only (no checks) round $(round)"
         cmd = """
         git add .
+        [ -s generated/force-add-files.txt ] && xargs git add -f < generated/force-add-files.txt
         git commit -m '$commit_msg'
         git push origin $branch
         """
@@ -368,6 +369,29 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                 @info "Running precheck on \$dest_path"
                 PackageScanner.precheck_package(dest_path, no_data_scan=$(no_data_scan))
                 @info "✓ Precheck complete"
+            end
+
+            # ── Force-track classified code files even under `data/` dirs ─────
+            # JPEtemplate's .gitignore excludes **/data/*, which can hide
+            # genuine author code (already flagged as code by classify_files)
+            # from git. List those paths, relative to the repo root, so a
+            # later `git add -f` step can force-track them.
+            program_files_txt = joinpath(ENV["GITHUB_WORKSPACE"], "generated", "program-files.txt")
+            if isfile(program_files_txt)
+                force_add_exclude = vcat($(no_data_scan), ["__pycache__"])
+                rels = String[]
+                for line in eachline(program_files_txt)
+                    isempty(strip(line)) && continue
+                    if !any(occursin(pat, line) for pat in force_add_exclude)
+                        push!(rels, relpath(line, ENV["GITHUB_WORKSPACE"]))
+                    end
+                end
+                open(joinpath(ENV["GITHUB_WORKSPACE"], "generated", "force-add-files.txt"), "w") do fio
+                    for rel in rels
+                        println(fio, rel)
+                    end
+                end
+                @info "✓ Wrote \$(length(rels)) path(s) to generated/force-add-files.txt"
             end
         else
             @info "run_checks=false — package fetched, skipping PackageScanner precheck"
