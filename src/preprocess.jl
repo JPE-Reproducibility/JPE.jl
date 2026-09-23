@@ -424,6 +424,23 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                 for line in eachline(program_files_txt)
                     isempty(strip(line)) && continue
                     if !any(occursin(pat, line) for pat in force_add_exclude)
+                        # These files have never been committed before (that's
+                        # the whole reason they need force-adding), so their
+                        # content has never passed through a secret check.
+                        # Redact in place before it's staged -- same
+                        # SECRET_PATTERNS the secrets report already scanned
+                        # this content with, so a redaction here always agrees
+                        # with what report-secrets.md flagged.
+                        try
+                            original = read(line, String)
+                            redacted = PackageScanner.redact_secrets(original)
+                            if redacted != original
+                                write(line, redacted)
+                                @warn "Redacted possible secret(s) in \$line before force-adding to git"
+                            end
+                        catch e
+                            @warn "Could not check \$line for secrets before force-add — leaving as-is" exception=e
+                        end
                         push!(rels, relpath(line, ENV["GITHUB_WORKSPACE"]))
                     end
                 end
