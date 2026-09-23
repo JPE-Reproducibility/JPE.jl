@@ -40,6 +40,16 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     # clone branch current "round" (skipped when reusing an existing local repo)
     if !reuse_repo
         gh_clone_branch(r.gh_org_repo, "round$(round)", to = repoloc)
+
+        # A previous preprocessing round may have committed replication-package/
+        # content to this branch (whatever wasn't .gitignore'd at the time).
+        # Clear it now so runner_precheck.jl's "already_have_package" skip-fetch
+        # check can't be satisfied by that stale, incomplete git-tracked copy --
+        # a fresh clone must always trigger a genuine fresh fetch from Dropbox.
+        # Only the same-session "reuse existing (crash-recovery)" path above,
+        # which never reaches here, is meant to skip re-fetching.
+        stale_package = joinpath(repoloc, "replication-package")
+        isdir(stale_package) && rm(stale_package, recursive=true, force=true)
     end
 
     # check size of replication packge on dropbox and decide what to do
