@@ -1361,7 +1361,8 @@ function backfill_paper_dois(; dry_run::Bool = true, base_url::String = dvserver
         if !ismissing(r.relation_type)
             value["publicationRelationType"] = Dict("typeName" => "publicationRelationType", "typeClass" => "controlledVocabulary", "multiple" => false, "value" => r.relation_type)
         end
-        body = Dict("publication" => Dict("typeName" => "publication", "typeClass" => "compound", "multiple" => true, "value" => [value]))
+        field = Dict("typeName" => "publication", "typeClass" => "compound", "multiple" => true, "value" => [value])
+        body = Dict("fields" => [field])
 
         try
             resp = HTTP.put(
