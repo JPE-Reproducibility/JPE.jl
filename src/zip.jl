@@ -1,4 +1,58 @@
 
+"""
+    rm_retry(path; recursive=true, force=true, retries=10, base_wait=0.3)
+
+`rm` with exponential-backoff retries, best-effort: if `path` still can't be
+removed after all retries, warns and returns instead of throwing.
+
+On macOS, a background scanner (Gatekeeper's quarantine follow-up check,
+XProtectRemediator, or a third-party EDR/AV agent) can start touching a
+freshly `ditto`-extracted scratch tree — the zip itself typically carries a
+`com.apple.quarantine` xattr — right as we finish reading/hashing every file
+in it (exactly what `local_file_md5s` does just before cleanup). That's
+enough to make `rm(recursive=true)` see `ENOTEMPTY`: it recurses by
+`readdir`-ing a directory, deleting every child, then `rmdir`-ing it, so a
+scanner re-touching the top-level directory *between* those two steps
+reproduces this deterministically, not just as a one-off race — hence the
+longer, exponential backoff (a fixed short retry budget doesn't give the
+scanner enough time to finish).
+
+Regardless of budget, cleanup of a **temp scratch directory** must never
+fail the caller's actual work: by the time this runs, the real computation
+(e.g. hashing) is already done and sitting in a `finally`, and orphaned dirs
+under `/var/folders/.../T` are reaped by the OS's periodic tmp cleaner
+anyway.
+"""
+function rm_retry(path; recursive::Bool = true, force::Bool = true, retries::Int = 8, base_wait::Real = 0.25, max_wait::Real = 2.0)
+    for attempt in 1:retries
+        try
+            rm(path; recursive = recursive, force = force)
+            return
+        catch e
+            if !(e isa Base.IOError)
+                rethrow()
+            end
+            if attempt == retries
+                @warn "rm_retry: giving up removing $path after $retries attempts; leaving it for the OS to reap" exception=e
+                return
+            end
+            sleep(min(base_wait * 2.0^(attempt - 1), max_wait))
+        end
+    end
+end
+
+"""
+    format_size_gb(size_gb::Real)
+
+Human-readable size for menu/println display: GB with 2 decimals when
+`size_gb >= 0.1`, otherwise MB with 1 decimal — individual files inside a
+flagged folder (e.g. a `.do`/`.dta` script) are routinely well under 100MB
+and would otherwise all print as a useless "0.0 GB".
+"""
+function format_size_gb(size_gb::Real)
+    size_gb >= 0.1 ? "$(round(size_gb, digits=2)) GB" : "$(round(size_gb * 1024, digits=1)) MB"
+end
+
 function disk_size_gb(path::String)
     if isfile(path)
         # For a file, just return its size
@@ -75,7 +129,7 @@ function zip_extract_to_scratch(zip_path::String; exclude::Vector{String} = Stri
     scratch = mktempdir()
     avail_gb = free_disk_space_gb(scratch)
     if !_enough_scratch_space(needed_gb, avail_gb)
-        rm(scratch, recursive = true, force = true)
+        rm_retry(scratch)
         error("zip_extract_to_scratch: need ~$(round(needed_gb, digits=2)) GB of local scratch disk to extract $zip_path, only $(round(avail_gb, digits=2)) GB free. Free up disk space before retrying.")
     end
 
@@ -88,7 +142,7 @@ function zip_extract_to_scratch(zip_path::String; exclude::Vector{String} = Stri
         target = joinpath(scratch, e)
         if ispath(target)
             @info "Deleting excluded folder from scratch extraction: $e"
-            rm(target, recursive = true, force = true)
+            rm_retry(target)
         end
     end
 
@@ -222,7 +276,7 @@ on disk (no zip file present — either delivered that way or left over from a
 prior run) — walks `root` with `walkdir`/`filesize` instead of shelling out to
 `unzip -l`.
 """
-function dir_sizes_on_disk(root::String; threshold_gb::Real = 1.0)
+function disk_entry_sizes(root::String)
     entries = @NamedTuple{size::Int, path::String}[]
     for (dirpath, _, files) in walkdir(root)
         for file in files
@@ -235,7 +289,40 @@ function dir_sizes_on_disk(root::String; threshold_gb::Real = 1.0)
             push!(entries, (size = sz, path = relpath(fullpath, root)))
         end
     end
-    aggregate_dir_sizes(entries; threshold_gb = threshold_gb)
+    entries
+end
+
+function dir_sizes_on_disk(root::String; threshold_gb::Real = 1.0)
+    aggregate_dir_sizes(disk_entry_sizes(root); threshold_gb = threshold_gb)
+end
+
+"""
+    immediate_children_sizes(entries, dir::String)
+
+Aggregate sizes one level below `dir` (archive- or root-relative, `""` meaning
+the top level) from a flat `entries` list (as returned by [`zip_entry_sizes`](@ref)
+or [`disk_entry_sizes`](@ref)). Unlike [`aggregate_dir_sizes`](@ref) this
+ignores `threshold_gb` entirely — it exists to let a caller drill into a
+folder that was flagged as one big blob (e.g. because its own children never
+individually cleared the exclusion threshold) and see what's actually inside.
+
+# Returns
+- `Vector{@NamedTuple{path::String, size_gb::Float64}}`, largest first. Empty
+  if `dir` has no entries strictly below it (e.g. `dir` is itself a file).
+"""
+function immediate_children_sizes(entries, dir::String)
+    prefix = isempty(dir) ? String[] : splitpath(dir)
+    depth = length(prefix)
+    sizes = Dict{String, Int}()
+    for e in entries
+        parts = splitpath(e.path)
+        length(parts) <= depth && continue
+        depth > 0 && parts[1:depth] != prefix && continue
+        child = joinpath(parts[1:depth+1]...)
+        sizes[child] = get(sizes, child, 0) + e.size
+    end
+    result = [(path = k, size_gb = v / 1024^3) for (k, v) in sizes]
+    sort(result, by = r -> r.size_gb, rev = true)
 end
 
 function rm_git(extract_dir)
@@ -243,7 +330,7 @@ function rm_git(extract_dir)
         if ".git" in dirs
             git_path = joinpath(root, ".git")
             @info "Removing git repository: $git_path"
-            rm(git_path, recursive=true, force=true)
+            rm_retry(git_path)
             # Remove from dirs to prevent walkdir from trying to enter it
             filter!(d -> d != ".git", dirs)
             # stop immediately after deleting the .git

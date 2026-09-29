@@ -31,6 +31,57 @@
     @test "Pkg" in paths2
 end
 
+@testset "immediate_children_sizes" begin
+    # mirrors the real-world case that motivated this: a flat "data" folder
+    # with files directly inside (no subdirectories), so aggregate_dir_sizes
+    # can only ever flag "data" as one giant blob — immediate_children_sizes
+    # is what lets a caller drill into it and see the individual files.
+    entries = [
+        (size = 40_000_000, path = "JPE replication package/data/a.csv"),
+        (size = 30_000_000, path = "JPE replication package/data/b.csv"),
+        (size = 20_000_000, path = "JPE replication package/data/c.csv"),
+        (size = 3,          path = "JPE replication package/code/main.R"),
+    ]
+
+    # top level: "data" and "code" folders
+    top = JPE.immediate_children_sizes(entries, "JPE replication package")
+    top_paths = Set(c.path for c in top)
+    @test top_paths == Set(["JPE replication package/data", "JPE replication package/code"])
+
+    # drilling into "data" surfaces the individual files, largest first
+    children = JPE.immediate_children_sizes(entries, "JPE replication package/data")
+    @test [c.path for c in children] == [
+        "JPE replication package/data/a.csv",
+        "JPE replication package/data/b.csv",
+        "JPE replication package/data/c.csv",
+    ]
+
+    # a leaf file has nothing further below it
+    @test isempty(JPE.immediate_children_sizes(entries, "JPE replication package/data/a.csv"))
+
+    # matches the actual bug report: only "data" gets flagged as a single unit
+    flagged = JPE.aggregate_dir_sizes(entries; threshold_gb = 0.0001)
+    @test length(flagged) == 1
+    @test flagged[1].path == "JPE replication package/data"
+end
+
+@testset "disk_entry_sizes matches zip_entry_sizes shape" begin
+    workdir = mktempdir()
+    root = joinpath(workdir, "JPE replication package")
+    mkpath(joinpath(root, "data"))
+    mkpath(joinpath(root, "code"))
+    write(joinpath(root, "data", "a.csv"), rand(UInt8, 1000))
+    write(joinpath(root, "data", "b.csv"), rand(UInt8, 2000))
+    write(joinpath(root, "code", "main.R"), "print('hi')")
+
+    entries = JPE.disk_entry_sizes(root)
+    paths = Set(e.path for e in entries)
+    @test paths == Set(["data/a.csv", "data/b.csv", "code/main.R"])
+
+    children = JPE.immediate_children_sizes(entries, "data")
+    @test Set(c.path for c in children) == Set(["data/a.csv", "data/b.csv"])
+end
+
 @testset "_enough_scratch_space" begin
     @test JPE._enough_scratch_space(10.0, 20.0) == true
     @test JPE._enough_scratch_space(10.0, 10.0) == false   # margin not met
@@ -58,6 +109,47 @@ end
     @test any(e -> e.path == "PackageName/code/main.R", entries)
     flagged = JPE.aggregate_dir_sizes(entries; threshold_gb = 0.0001)
     @test any(f -> f.path == "PackageName/confidential-data-do-not-publish", flagged)
+end
+
+function _make_flat_data_package(workdir)
+    # mimics the real 112GB package structure: a top folder with a space in
+    # its name, a flat "data" dir holding files directly (no subdirectories —
+    # the reason aggregate_dir_sizes can only flag "data" as one unit), and a
+    # separate small "code" dir.
+    src = joinpath(workdir, "src")
+    top = joinpath(src, "JPE replication package")
+    mkpath(joinpath(top, "data"))
+    mkpath(joinpath(top, "code"))
+    for (name, nbytes) in [("a.csv", 40_000), ("b.csv", 30_000), ("c.csv", 20_000)]
+        write(joinpath(top, "data", name), rand(UInt8, nbytes))
+    end
+    write(joinpath(top, "code", "main.R"), "print('hi')")
+
+    zip_path = joinpath(workdir, "JPE replication package.zip")
+    topname = "JPE replication package"
+    run(Cmd(`zip -rq $zip_path $topname`, dir = src))
+    zip_path
+end
+
+@testset "flat data folder: flagged, drillable, and excludable end-to-end" begin
+    workdir = mktempdir()
+    zip_path = _make_flat_data_package(workdir)
+
+    entries = JPE.zip_entry_sizes(zip_path)
+    flagged = JPE.aggregate_dir_sizes(entries; threshold_gb = 0.00005)
+    @test length(flagged) == 1
+    @test flagged[1].path == "JPE replication package/data"
+
+    children = JPE.immediate_children_sizes(entries, flagged[1].path)
+    @test length(children) == 3
+
+    scratch = JPE.zip_extract_to_scratch(zip_path; exclude = [flagged[1].path])
+    try
+        @test isfile(joinpath(scratch, "JPE replication package", "code", "main.R"))
+        @test !ispath(joinpath(scratch, "JPE replication package", "data"))
+    finally
+        rm(scratch, recursive = true, force = true)
+    end
 end
 
 @testset "zip_extract_to_scratch excludes before returning" begin
