@@ -436,8 +436,8 @@ def create_password_protected_link(path, password, token):
         }
     except dropbox.exceptions.ApiError as e:
         if hasattr(e.error, 'is_shared_link_already_exists') and e.error.is_shared_link_already_exists():
-            existing_link = e.error.get_shared_link_already_exists().metadata
-            dbx.sharing_revoke_shared_link(existing_link.url)
+            for existing_link in dbx.sharing_list_shared_links(path=path, direct_only=True).links:
+                dbx.sharing_revoke_shared_link(existing_link.url)
             link = dbx.sharing_create_shared_link_with_settings(path, settings)
             return {
                 'url': link.url,
@@ -465,6 +465,13 @@ def upload_text(path, text, token):
     from dropbox.files import WriteMode
     dbx = dropbox.Dropbox(token)
     dbx.files_upload(text.encode('utf-8'), path, mode=WriteMode.overwrite)
+
+
+def upload_file(path, content_bytes, token):
+    """Upload raw bytes to a Dropbox path, overwriting if it exists."""
+    from dropbox.files import WriteMode
+    dbx = dropbox.Dropbox(token)
+    dbx.files_upload(bytes(content_bytes), path, mode=WriteMode.overwrite)
 
 
 def download_via_password_link(url, password, token):

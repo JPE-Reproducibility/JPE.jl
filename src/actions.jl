@@ -1427,7 +1427,93 @@ function monitor_file_requests()
         @info "No file request arrived ❌"
     end
 
-    return Dict(:waiting => waiting, :arrived => arrived, :remindJO => df_reminders) 
+    return Dict(:waiting => waiting, :arrived => arrived, :remindJO => df_reminders)
+end
+
+
+"""
+    local_dropbox_files(dir)
+
+List real submitted files in a local Dropbox folder, ignoring OS/sync noise
+(dotfiles like `.DS_Store`). Returns an empty vector if `dir` doesn't exist.
+"""
+function local_dropbox_files(dir)
+    isdir(dir) || return String[]
+    filter(f -> !startswith(f, "."), readdir(dir))
+end
+
+"""
+    monitor_file_requests_local()
+
+Cross-check `monitor_file_requests`'s Dropbox-API-based arrival detection
+against what is actually sitting in the local Dropbox folders. The API
+check (`dbox_fr_arrived`) trusts Dropbox's own file-request submission
+counter, which can read 0 even though files are present locally (request
+closed/expired, author uploaded outside the file-request widget, API lag).
+This walks `repl_package_path` on disk directly instead.
+
+Returns a `Dict` with three buckets (all `DataFrame`s):
+- `:agree_arrived` — API and local disk both see files
+- `:local_only`     — disk has files but the API says nothing arrived
+                       (the "lost notification" case — review, then call
+                       `paper_submitted_manually(paper_id, round)`)
+- `:agree_waiting`  — neither sees anything yet
+"""
+function monitor_file_requests_local()
+    i = @chain db_df("papers") begin
+        subset(:status => ByRow(.∈(Ref(["with_author","new_arrival"]))))
+        select(:status, :paper_id)
+        leftjoin(db_df("iterations"), on = [:paper_id])
+        groupby(:paper_id)
+        subset(:round => (x -> x .== maximum(x)))
+        combine(identity)
+    end
+
+    agree_arrived = NamedTuple[]
+    local_only = NamedTuple[]
+    agree_waiting = NamedTuple[]
+
+    @info "checking local Dropbox folders..."
+    for r in eachrow(i)
+        try
+            println("  📂 $(r.paper_slug)")
+
+            pkg_dir = string(ENV["JPE_DBOX_APPS"], r.repl_package_path)
+            local_files = local_dropbox_files(pkg_dir)
+            local_arrived = !isempty(local_files)
+
+            api_arrived = try
+                dbox_fr_arrived(dbox_token, r.file_request_id_pkg)["file_count"] > 0
+            catch e
+                @warn "Error checking API file request for $(r.paper_slug): $e"
+                missing
+            end
+
+            row = (journal = r.journal, paper_id = r.paper_id, round = r.round,
+                   slug = r.paper_slug, n_local_files = length(local_files),
+                   local_path = pkg_dir)
+
+            if local_arrived && api_arrived === true
+                push!(agree_arrived, row)
+            elseif local_arrived
+                push!(local_only, row)
+                @warn "📦 $(r.paper_slug) (round $(r.round)): files found locally but the Dropbox file-request counter shows nothing arrived — notification likely lost!"
+            else
+                push!(agree_waiting, row)
+            end
+        catch e
+            @warn "Error checking local folder for $(r.paper_slug): $e"
+        end
+    end
+
+    df_local_only = DataFrame(local_only)
+    if nrow(df_local_only) > 0
+        @warn "$(nrow(df_local_only)) paper(s) have files sitting locally that the Dropbox file-request API never registered. Review :local_only, then call paper_submitted_manually(paper_id, round) once confirmed."
+    end
+
+    return Dict(:agree_arrived => DataFrame(agree_arrived),
+                :local_only => df_local_only,
+                :agree_waiting => DataFrame(agree_waiting))
 end
 
 
@@ -1462,6 +1548,65 @@ end
 function insert_paper_doi!(paper_id,doi_paper)
     p = db_filter_paper(paper_id)
     db_update_cell("papers","paper_id = $paper_id","doi_paper","$doi_paper")
+end
+
+"""
+    send_replicator_gift(paper_id::String, pdf_path::String; dry_run::Bool = true)
+
+Send the replicator who did the successful round of replication on `paper_id`
+a personal copy of the final published PDF as a thank-you gift, once the
+package has a `doi_paper` on file. This step is not automated end-to-end: the
+JPE site is paywalled behind a personal login, so `pdf_path` must already be a
+locally downloaded copy (e.g. fetched manually or via claude-in-chrome with
+the DE logged in) before calling this function.
+
+Looks up the replicator from the successful round (`iterations.is_success ==
+true`), uploads `pdf_path` to Dropbox under `/JPE-gifts/`, creates a
+password-protected shared link, and creates (does not send) a Gmail draft
+thanking them with the link and password. Only marks
+`papers.replicator_gift_sent_at` once the draft is created, so re-running for
+the same paper is a no-op — safe for a periodic review pass.
+
+# Keyword arguments
+- `dry_run::Bool=true`: when true (default), resolves the replicator and
+  returns the plan without uploading, linking, drafting, or marking anything.
+"""
+function send_replicator_gift(paper_id::String, pdf_path::String; dry_run::Bool = true)
+    p = db_filter_paper(paper_id)
+    nrow(p) == 1 || error("Paper ID $paper_id not found or has multiple entries")
+    p = p[1, :]
+
+    ismissing(p.replicator_gift_sent_at) || error("gift already recorded as sent for $paper_id at $(p.replicator_gift_sent_at)")
+    isfile(pdf_path) || error("no such file: $pdf_path")
+
+    it = db_df("iterations")
+    successful = filter(r -> r.paper_id == paper_id && r.is_success === true, it)
+    isempty(successful) && error("no successful replication round found for $paper_id")
+    replicator_email = successful[end, :replicator1]
+    ismissing(replicator_email) && error("no replicator email recorded on the successful round for $paper_id")
+
+    reps = read_replicators()
+    rep_row = filter(r -> r.email == replicator_email, reps)
+    first_name = isempty(rep_row) ? split(replicator_email, "@")[1] : rep_row[1, :name]
+
+    dest_path = "/JPE-gifts/$(p.paper_slug).pdf"
+    password = randstring(16)
+
+    if dry_run
+        @info "dry_run=true — would upload $pdf_path -> $dest_path, create a password link, and draft a thank-you email to $replicator_email ($first_name). Re-run with dry_run=false to execute."
+        return (paper_id = paper_id, title = p.title, replicator_email = replicator_email, first_name = first_name, dest_path = dest_path)
+    end
+
+    dbox_upload_file(pdf_path, dest_path, dbox_token)
+    link = dbox_create_password_link(dest_path, password, dbox_token)
+
+    body = replicator_gift_email_body(first_name, p.title, link["url"], password)
+    gmail_draft([author_email(replicator_email)], "A little JPE souvenir: the published version of \"$(p.title)\"", body, [])
+
+    db_update_cell("papers", "paper_id = $paper_id", "replicator_gift_sent_at", Dates.now())
+
+    @info "Gift drafted for $replicator_email — review and send the Gmail draft manually."
+    (paper_id = paper_id, title = p.title, replicator_email = replicator_email, url = link["url"], password = password)
 end
 
 # create 

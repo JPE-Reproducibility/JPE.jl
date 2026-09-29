@@ -650,7 +650,8 @@ function db_get_table_schema(table::String)
             "github_url" => Dict(:type => "VARCHAR", :constraints => ""),
             "doi" => Dict(:type => "VARCHAR", :constraints => ""),
             "doi_paper" => Dict(:type => "VARCHAR", :constraints => ""),
-            "gh_org_repo" => Dict(:type => "VARCHAR", :constraints => "")
+            "gh_org_repo" => Dict(:type => "VARCHAR", :constraints => ""),
+            "replicator_gift_sent_at" => Dict(:type => "TIMESTAMP", :constraints => "")
         ),
         "form_arrivals" => Dict(
             "paper_id" => Dict(:type => "VARCHAR", :constraints => ""),

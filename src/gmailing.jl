@@ -520,6 +520,28 @@ function gmail_file_request_body(first,paperID,title,url,paper_url = nothing)
     string(m1,signature())
 end
 
+function replicator_gift_email_body(first, title, url, password)
+    m1 = """
+    Dear $first,
+    <br>
+    <br>
+    As a small thank-you for your careful replication work on "$title", I wanted to share the final published version of the paper with you.
+    <br>
+    <br>
+    You can download it here: <a href="$url">$url</a><br>
+    Password: $password
+    <br>
+    <br>
+    Thanks again for your excellent work, it makes a real difference to the quality of what we publish.
+    <br>
+    <br>
+    With kind regards,
+    <br>
+    Florian
+    """
+    string(m1, signature())
+end
+
 function signature()
     """
     <br>

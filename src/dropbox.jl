@@ -156,6 +156,22 @@ function dbox_upload_text(path, text, token)
     end
 end
 
+function dbox_upload_file(local_path, dest_path, token)
+    content = read(local_path)
+    try
+        py"upload_file"(dest_path, content, token)
+    catch e1
+        try
+            @error "$e1"
+            @info "refreshing dropbox token"
+            dbox_set_token()
+            py"upload_file"(dest_path, content, token)
+        catch e2
+            throw(e2)
+        end
+    end
+end
+
 function dbox_download_via_password_link(url, password, token)
     try
         py"download_via_password_link"(url, password, token)
