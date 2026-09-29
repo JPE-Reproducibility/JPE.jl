@@ -125,18 +125,22 @@ function paper_report(paperID; save_csv=false, csv_path=nothing)
     
     # Calculate days in current status
     days_in_status = calculate_days_in_status(paper)
-    
+
     # Determine actor responsible for next action
     responsible_actor = determine_actor(paper.status)
-    
+
+    # Total replicator hours across all iterations
+    total_hours = paper_total_hours(paperID)
+
     # Create paper details DataFrame
     details_df = DataFrame(
-        Field = ["Paper ID", "Title", "Authors", "Journal", "Current Status", 
-                "Days in Current Status", "Responsible Actor", "Current Round"],
-        Value = [paper.paper_id, paper.title, 
-                "$(paper.firstname_of_author) $(paper.surname_of_author)", 
-                paper.journal, paper.status, days_in_status, 
-                responsible_actor, paper.round]
+        Field = ["Paper ID", "Title", "Authors", "Journal", "Current Status",
+                "Days in Current Status", "Responsible Actor", "Current Round",
+                "Total Replicator Hours"],
+        Value = [paper.paper_id, paper.title,
+                "$(paper.firstname_of_author) $(paper.surname_of_author)",
+                paper.journal, paper.status, days_in_status,
+                responsible_actor, paper.round, total_hours]
     )
     
     # Create timeline DataFrame
@@ -659,6 +663,17 @@ function status_report()
 end
 
 
+"total replicator hours logged for a paper, summed across all iterations/rounds"
+function paper_total_hours(paperID)
+    @chain db_df("iterations") begin
+        subset(:paper_id => ByRow(==(paperID)))
+        transform([:hours1, :hours2] .=> ByRow(passmissing(Float64)) .=> [:hours1, :hours2])
+        transform([:hours1, :hours2] => ByRow((h1, h2) -> coalesce(h1, 0.0) + coalesce(h2, 0.0)) => :hours)
+        _.hours
+        sum
+    end
+end
+
 "get hours worked by replicator"
 function replicator_hours_worked()
     x1 = @chain db_df("iterations") begin
@@ -949,13 +964,18 @@ function ps()
     for r in eachrow(p)
         push!(x, (r.paper_id, calculate_days_in_status(r)))
     end
+    it = select(db_df("iterations"), :paper_id, :round, :replicator1 => :replicator_email)
+    it_prev = select(db_df("iterations"), :paper_id, :round => (r -> r .+ 1) => :round, :replicator1 => :replicator_email_prev)
     df = @chain p begin
         subset(:comments => ByRow(x -> (ismissing(x) | (x !=("[TEST]")))))
         groupby(:status)
         combine(:paper_slug,:paper_id, :round, :is_confidential)
         select(:status => (x -> categorical(x, levels = db_statuses())) => :status,:paper_slug,:round, :paper_id, :is_confidential)
         leftjoin(x, on = :paper_id)
-        select(:status, :paper_slug, :round, :days_in_status, :is_confidential)
+        leftjoin(it, on = [:paper_id, :round])
+        leftjoin(it_prev, on = [:paper_id, :round])
+        transform([:status, :replicator_email, :replicator_email_prev] => ByRow((s, e, ep) -> (ismissing(e) && s == "with_author") ? ep : e) => :replicator_email)
+        select(:status, :paper_slug, :round, :days_in_status, :is_confidential, :replicator_email)
         # sort( :days_in_status, rev = true)
     end
     sort!(df, [:status, :days_in_status], rev = [false,true])
