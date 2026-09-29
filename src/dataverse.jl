@@ -98,7 +98,7 @@ function local_file_md5s(root::String; exclude::Vector{String} = String[])
         try
             merge(_hash_tree(root), _hash_tree(scratch))
         finally
-            rm(scratch, recursive = true, force = true)
+            rm_retry(scratch)
         end
     else
         length(zips) == 0 || @warn "local_file_md5s: expected exactly one zip in $root, found $(length(zips)) — hashing what's already on disk without extracting any of them."
@@ -165,12 +165,62 @@ function dv_check_report(nt::NamedTuple; exclude::Vector{String} = String[])
 end
 
 """
+    resolve_exclusion(entries, dir::String)
+
+Interactive drill-down for a single flagged folder: exclude `dir` whole,
+include it whole (exclude nothing), or descend into its immediate children
+(via [`immediate_children_sizes`](@ref), ignoring `threshold_gb`) and let the
+user pick which of those to exclude instead — recursing again on any child
+the user chooses, so a large folder with real substructure can be pared down
+to just the parts that actually need excluding rather than all-or-nothing.
+
+# Returns
+- `Vector{String}`: paths (relative to the package root) to exclude. Can be
+  empty if the user drills in and selects nothing.
+"""
+function resolve_exclusion(entries, dir::String)
+    children = immediate_children_sizes(entries, dir)
+    isempty(children) && return [dir]
+
+    println("\n$dir breaks down into:")
+    for c in children
+        println("  $(format_size_gb(c.size_gb))   $(c.path)")
+    end
+
+    menu = RadioMenu([
+        "Exclude entire folder: $dir",
+        "Select specific contents of $dir to exclude",
+        "Include everything in $dir (exclude nothing)",
+    ])
+    choice = request(menu)
+    choice == 1 && return [dir]
+    choice == 3 && return String[]
+
+    select_menu = MultiSelectMenu(["$(format_size_gb(c.size_gb))   $(c.path)" for c in children])
+    chosen = request(select_menu)
+    isempty(chosen) && return String[]
+
+    result = String[]
+    for i in chosen
+        append!(result, resolve_exclusion(entries, children[i].path))
+    end
+    result
+end
+
+"""
     dv_prompt_large_folder_exclusions(package_path; max_pkg_size_gb = 5.0, threshold_gb = 1.0)
 
 Guard against unzipping a package too large for local disk. If `package_path`
 exceeds `max_pkg_size_gb`, lists folders at or above `threshold_gb` (from the
 zip listing if a zip is present, else from what's already on disk) and lets
 the user choose what to do before any extraction/hashing happens.
+
+Choosing "Exclude flagged folder(s)" always opens a `MultiSelectMenu` over the
+flagged folders (pre-checked) — even when only one was flagged — so the user
+explicitly confirms rather than having it silently auto-excluded. For each
+folder selected there, the user can also choose to drill in
+([`resolve_exclusion`](@ref)) instead of excluding it wholesale, to exclude
+only part of it.
 
 # Returns
 - `Vector{String}`: paths (relative to `package_path`) to exclude from
@@ -183,16 +233,15 @@ function dv_prompt_large_folder_exclusions(package_path::String; max_pkg_size_gb
     # extracted content is many times larger (the exact way a 5GB threshold can
     # silently pass through a package that fills the disk on extraction).
     zips = filter(f -> isfile(f) && endswith(lowercase(f), ".zip"), readdir(package_path, join = true))
-    entries = length(zips) == 1 ? zip_entry_sizes(zips[1]) : nothing
+    entries = length(zips) == 1 ? zip_entry_sizes(zips[1]) : disk_entry_sizes(package_path)
 
-    size_gb = isnothing(entries) ? disk_size_gb(package_path) : sum(e.size for e in entries) / 1024^3
+    size_gb = sum(e.size for e in entries) / 1024^3
     size_gb <= max_pkg_size_gb && return String[]
 
     @info "Package at $package_path is $(round(size_gb, digits=2)) GB uncompressed (exceeds max_pkg_size_gb = $max_pkg_size_gb)."
 
     while true
-        flagged = isnothing(entries) ? dir_sizes_on_disk(package_path; threshold_gb = threshold_gb) :
-                                        aggregate_dir_sizes(entries; threshold_gb = threshold_gb)
+        flagged = aggregate_dir_sizes(entries; threshold_gb = threshold_gb)
 
         if isempty(flagged)
             @info "No individual folder exceeds $threshold_gb GB — nothing to flag."
@@ -201,7 +250,7 @@ function dv_prompt_large_folder_exclusions(package_path::String; max_pkg_size_gb
 
         println("\nLarge folders found (>= $threshold_gb GB):")
         for f in flagged
-            println("  $(round(f.size_gb, digits=2)) GB   $(f.path)")
+            println("  $(format_size_gb(f.size_gb))   $(f.path)")
         end
 
         menu = RadioMenu(["Unzip everything", "Exclude flagged folder(s)", "Browse full listing first", "Abort"])
@@ -210,13 +259,27 @@ function dv_prompt_large_folder_exclusions(package_path::String; max_pkg_size_gb
         if choice == 1
             return String[]
         elseif choice == 2
-            if length(flagged) == 1
-                return [flagged[1].path]
-            else
-                select_menu = MultiSelectMenu([f.path for f in flagged])
-                selected = request(select_menu)
-                return [flagged[i].path for i in selected]
+            options = ["$(format_size_gb(f.size_gb))   $(f.path)" for f in flagged]
+            select_menu = MultiSelectMenu(options; selected = Set(1:length(flagged)))
+            chosen_idxs = request(select_menu)
+            if isempty(chosen_idxs)
+                println("\nNothing selected for exclusion — back to menu.")
+                continue
             end
+            exclude = String[]
+            for i in sort(collect(chosen_idxs))
+                f = flagged[i]
+                drill_menu = RadioMenu([
+                    "Exclude entire folder: $(f.path) ($(format_size_gb(f.size_gb)))",
+                    "Drill in to choose specific contents of $(f.path)",
+                ])
+                if request(drill_menu) == 1
+                    push!(exclude, f.path)
+                else
+                    append!(exclude, resolve_exclusion(entries, f.path))
+                end
+            end
+            return exclude
         elseif choice == 3
             browse_package_contents(package_path)
             # loop back to the menu
@@ -1192,6 +1255,146 @@ function dv_add_files(doi::AbstractString, additions::AbstractDict{<:AbstractStr
     pretty_table(plan, header = names(plan))
     n_ok = count(==("ok"), result_status)
     @info "$n_ok of $(nrow(plan)) addition(s) succeeded. Dataset is now in draft — review and publish manually when ready."
+
+    plan
+end
+
+"""
+    backfill_paper_dois(; dry_run = true, base_url = dvserver(), api_token = dvtoken(), sleep_between = 0.5)
+
+Monthly backfill for the "paper DOI not known at deposit time" gap: for every
+published package (`papers.status == "published_package"`) missing
+`doi_paper`, resolve the journal article's DOI via Crossref
+([`dv_jpe_journal_articles`](@ref) + [`dv_match_article`](@ref)) and, once
+found, write it into the dataset's `publication` metadata field on Dataverse
+and record it locally ([`insert_paper_doi!`](@ref)).
+
+Some packages already carry a manually-set `publicationRelationType`
+(e.g. "IsSupplementTo") on their `publication` field from deposit time;
+others have none. This function preserves whatever is already there —
+it only fills/overwrites `publicationIDType`, `publicationIDNumber`,
+`publicationURL`, and refreshes `publicationCitation` (dropping "Forthcoming"
+wording now that the real citation is known). It never invents a relation
+type the DE didn't already set.
+
+# Keyword arguments
+- `dry_run::Bool=true`: when true (default), only resolves matches and
+  returns the plan — nothing is written to Dataverse or the local DB. Pass
+  `dry_run=false` to execute.
+- `base_url`/`api_token`: default to production Harvard Dataverse.
+
+For each match, writes the updated `publication` metadata block via
+`editMetadata` (creating a new draft version) then immediately publishes it
+as a minor version bump (e.g. 1.0 -> 1.1).
+"""
+function backfill_paper_dois(; dry_run::Bool = true, base_url::String = dvserver(), api_token::String = dvtoken(), sleep_between::Real = 0.5)
+    papers = db_df("papers")
+    todo = filter(r -> r.status == "published_package" && ismissing(r.doi_paper), papers)
+
+    if isempty(todo)
+        @info "No published packages missing a paper DOI."
+        return DataFrame()
+    end
+
+    @info "fetching JPE journal table of contents from Crossref..."
+    articles = dv_jpe_journal_articles()
+    all_datasets = dv_fetch_all_datasets(subtree = "JPE", include_size = false)
+    headers = Dict("X-Dataverse-key" => api_token)
+
+    rows = NamedTuple[]
+    for r in eachrow(todo)
+        idx = findfirst(x -> x["global_id"] == r.doi, all_datasets)
+        if isnothing(idx)
+            push!(rows, (paper_id = r.paper_id, package_doi = r.doi, article_doi = missing, relation_type = missing, citation = missing, status = "package_not_found_on_dataverse"))
+            continue
+        end
+        item = all_datasets[idx]
+        article_doi = dv_match_article(item, articles)
+        if ismissing(article_doi)
+            push!(rows, (paper_id = r.paper_id, package_doi = r.doi, article_doi = missing, relation_type = missing, citation = missing, status = "no_article_match"))
+            continue
+        end
+        art_row = only(filter(a -> a.doi == article_doi, articles))
+        author_str = join(titlecase.(art_row.authors), ", ")
+        citation = "$author_str. $(year(art_row.pub_date)). \"$(art_row.title)\" <i>J.P.E.</i> https://doi.org/$(article_doi)"
+
+        existing_relation_type = missing
+        try
+            meta = dv_get_dataset_metadata(r.doi)
+            cf = meta["metadataBlocks"]["citation"]["fields"]
+            pub_field = findfirst(f -> f["typeName"] == "publication", cf)
+            if !isnothing(pub_field) && !isempty(cf[pub_field]["value"])
+                existing = cf[pub_field]["value"][1]
+                if haskey(existing, "publicationRelationType")
+                    existing_relation_type = existing["publicationRelationType"]["value"]
+                end
+            end
+        catch e
+            @warn "could not read existing publication metadata for $(r.doi), proceeding without preserving relation type" exception=e
+        end
+
+        push!(rows, (paper_id = r.paper_id, package_doi = r.doi, article_doi = article_doi, relation_type = existing_relation_type, citation = citation, status = "matched"))
+    end
+
+    plan = DataFrame(rows)
+    pretty_table(plan, header = names(plan))
+
+    if dry_run
+        @info "dry_run=true — nothing written. Re-run with dry_run=false to execute the $(count(==("matched"), plan.status)) matched update(s)."
+        return plan
+    end
+
+    result_status = Vector{String}(undef, nrow(plan))
+
+    for (i, r) in enumerate(eachrow(plan))
+        if r.status != "matched"
+            result_status[i] = "skipped: $(r.status)"
+            continue
+        end
+
+        value = Dict{String, Any}(
+            "publicationCitation" => Dict("typeName" => "publicationCitation", "typeClass" => "primitive", "multiple" => false, "value" => r.citation),
+            "publicationIDType"   => Dict("typeName" => "publicationIDType", "typeClass" => "controlledVocabulary", "multiple" => false, "value" => "doi"),
+            "publicationIDNumber" => Dict("typeName" => "publicationIDNumber", "typeClass" => "primitive", "multiple" => false, "value" => r.article_doi),
+            "publicationURL"      => Dict("typeName" => "publicationURL", "typeClass" => "primitive", "multiple" => false, "value" => "https://doi.org/$(r.article_doi)"),
+        )
+        if !ismissing(r.relation_type)
+            value["publicationRelationType"] = Dict("typeName" => "publicationRelationType", "typeClass" => "controlledVocabulary", "multiple" => false, "value" => r.relation_type)
+        end
+        body = Dict("publication" => Dict("typeName" => "publication", "typeClass" => "compound", "multiple" => true, "value" => [value]))
+
+        try
+            resp = HTTP.put(
+                "$(base_url)/api/datasets/:persistentId/editMetadata?persistentId=$(r.package_doi)&replace=true",
+                headers, JSON.json(body); status_exception = false, retry = false,
+            )
+            parsed = JSON.parse(String(resp.body))
+            if resp.status == 200 && parsed["status"] == "OK"
+                pub_resp = HTTP.post(
+                    "$(base_url)/api/datasets/:persistentId/actions/:publish?persistentId=$(r.package_doi)&type=minor",
+                    headers; status_exception = false, retry = false,
+                )
+                pub_parsed = JSON.parse(String(pub_resp.body))
+                if pub_resp.status == 200 && pub_parsed["status"] == "OK"
+                    insert_paper_doi!(r.paper_id, r.article_doi)
+                    result_status[i] = "ok"
+                else
+                    result_status[i] = "metadata written but publish failed ($(pub_resp.status)): $(get(pub_parsed, "message", String(pub_resp.body)))"
+                end
+            else
+                result_status[i] = "API error ($(resp.status)): $(get(parsed, "message", String(resp.body)))"
+            end
+        catch e
+            result_status[i] = "exception: $e"
+        end
+
+        sleep(sleep_between)
+    end
+
+    plan.result = result_status
+    pretty_table(plan, header = names(plan))
+    n_ok = count(==("ok"), result_status)
+    @info "$n_ok of $(nrow(plan)) paper DOI(s) written and published."
 
     plan
 end
