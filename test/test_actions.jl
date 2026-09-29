@@ -1,3 +1,16 @@
+@testset "local_dropbox_files" begin
+    mktempdir() do d
+        @test JPE.local_dropbox_files(d) == String[]
+        @test JPE.local_dropbox_files(joinpath(d, "does-not-exist")) == String[]
+
+        touch(joinpath(d, ".DS_Store"))
+        @test JPE.local_dropbox_files(d) == String[]
+
+        touch(joinpath(d, "package.zip"))
+        @test JPE.local_dropbox_files(d) == ["package.zip"]
+    end
+end
+
 @testset "replicator_available" begin
     rs = DataFrame(
         :email => ["a@example.com", "b@example.com", "c@example.com"],
