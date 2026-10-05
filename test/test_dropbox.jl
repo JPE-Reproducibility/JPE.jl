@@ -39,6 +39,42 @@
     end
 end
 
+@testset "permanent dropbox folder link for oversized reports" begin
+    test_folder = "/testing/jpe_test_large_reports_$(rand(UInt32))"
+    token       = JPE.dbox_token
+    link_url    = nothing
+
+    try
+        # 1. upload_text on a not-yet-existing path creates the folder server-side
+        JPE.dbox_upload_text(joinpath(test_folder, ".keep"), "placeholder", token)
+
+        # 2. create a permanent (no expiry) shared link to the folder
+        link_url = JPE.dbox_link_at_path(test_folder, token)
+        @test !isempty(link_url)
+        @test startswith(link_url, "https://")
+
+        # 3. calling again on an already-shared folder must return the same
+        #    link rather than erroring (this is what preprocess2 relies on
+        #    when re-running preprocessing for the same round)
+        link_url2 = JPE.dbox_link_at_path(test_folder, token)
+        @test link_url2 == link_url
+
+    finally
+        if !isnothing(link_url)
+            try
+                JPE.dbox_revoke_link(link_url, token)
+            catch e
+                @warn "Could not revoke test folder link" exception=e
+            end
+        end
+        try
+            JPE.dbox_delete_path(test_folder, token)
+        catch e
+            @warn "Could not delete test folder $test_folder" exception=e
+        end
+    end
+end
+
 @testset "deleting a package folder" begin
     dir = mktempdir()
     v1 = joinpath(dir,"1")
