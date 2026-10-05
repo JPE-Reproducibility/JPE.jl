@@ -42,7 +42,7 @@ function gh_set_default_branch(gh_org_repo::String, branch::String)
 end
 
 gh_delete_repo(url) = run(`gh repo delete $url --yes`)
-gh_create_repo(gh_org_repo) = run(`gh repo create $(gh_org_repo) --public --template JPE-Reproducibility/JPEtemplate`)
+gh_create_repo(gh_org_repo) = run(`gh repo create $(gh_org_repo) --private --template JPE-Reproducibility/JPEtemplate`)
 
 function gh_pull(paper_id; round=nothing)
     paper = db_filter_paper(paper_id)
