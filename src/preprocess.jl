@@ -40,17 +40,15 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     # clone branch current "round" (skipped when reusing an existing local repo)
     if !reuse_repo
         gh_clone_branch(r.gh_org_repo, "round$(round)", to = repoloc)
-
-        # A previous preprocessing round may have committed replication-package/
-        # content to this branch (whatever wasn't .gitignore'd at the time).
-        # Clear it now so runner_precheck.jl's "already_have_package" skip-fetch
-        # check can't be satisfied by that stale, incomplete git-tracked copy --
-        # a fresh clone must always trigger a genuine fresh fetch from Dropbox.
-        # Only the same-session "reuse existing (crash-recovery)" path above,
-        # which never reaches here, is meant to skip re-fetching.
-        stale_package = joinpath(repoloc, "replication-package")
-        isdir(stale_package) && rm(stale_package, recursive=true, force=true)
     end
+    # NOTE: a previous preprocessing round may have left replication-package/
+    # content committed on this branch (whatever wasn't .gitignore'd). We
+    # deliberately do NOT clear it here: for gh-runner mode nothing in this
+    # local clone re-fetches the package before the trigger push, so wiping
+    # it here would just push a commit that deletes the previously-committed
+    # code. It's only cleared (below, in the `local` branch) right before a
+    # genuine local re-fetch, where it would otherwise let
+    # runner_precheck.jl's "already_have_package" check skip that fetch.
 
     # check size of replication packge on dropbox and decide what to do
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)
@@ -106,6 +104,20 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     link_url = dbox_link_at_path(dropbox_path, dbox_token, expiry = 15)
     isnothing(link_url) && error("dbox_link_at_path returned nothing for $dropbox_path — check Dropbox credentials and path")
 
+    # Permanent (no expiry) shared link to a per-round Dropbox folder that holds
+    # full copies of any generated report file too large to embed in the repo
+    # (e.g. a file listing capped by write_runner_script). Repos are private and
+    # authors are never given repo/org access, so this Dropbox link is how they
+    # actually see the full list -- the GitHub Actions artifact it used to point
+    # to also expired after 90 days regardless of repo visibility.
+    # `upload_text` on a not-yet-existing path creates the folder server-side,
+    # so the link can be created immediately without waiting on Dropbox desktop
+    # sync.
+    large_reports_path = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "large-reports")
+    dbox_upload_text(joinpath(large_reports_path, ".keep"), "placeholder", dbox_token)
+    large_reports_url = dbox_link_at_path(large_reports_path, dbox_token)
+    isnothing(large_reports_url) && error("dbox_link_at_path returned nothing for $large_reports_path — check Dropbox credentials and path")
+
     # Create _variables.yml with all necessary info for the runner
     open(joinpath(repoloc, "_variables.yml"), "w") do io
         println(io, "title: \"$(r.title)\"")
@@ -120,6 +132,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         println(io, "package_size_gb: $(size_gb)")
         println(io, "package_max_file_size_gb: $(max_file_size_gb)")
         println(io, "package_max_pkg_size_gb: $(max_pkg_size_gb)")
+        println(io, "large_reports_url: \"$(large_reports_url)\"")
     end
 
     # add a run badge to the README and change title
@@ -152,6 +165,16 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
     preprocess_mode = choice == 1 ? "local" : "gh-runner"
     db_update_cell("iterations", "paper_id = '$paperID' AND round = $round", "preprocess_mode", preprocess_mode)
     if choice == 1 # local
+        # A fresh clone (not a same-session crash-recovery reuse) may still
+        # carry a stale, incomplete replication-package/ from a previous
+        # round's commit. Clear it now, right before the genuine re-fetch
+        # below, so "already_have_package" can't be satisfied by that stale
+        # copy -- see the NOTE above the clone for why this isn't done earlier.
+        if !reuse_repo
+            stale_package = joinpath(repoloc, "replication-package")
+            isdir(stale_package) && rm(stale_package, recursive=true, force=true)
+        end
+
         runner_env = ENV["JULIA_RUNNER_ENV"]
         runner_script = joinpath(repoloc,"runner_precheck.jl")
 
@@ -189,7 +212,16 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         run(`gh secret set DROPBOX_DOWNLOAD_URL --body $(replace(link_url, "dl=0" => "dl=1")) --repo $(r.gh_org_repo)`)
     
         branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
-        commit_msg = run_checks ? "[trigger remote] for round $(round) 🎯" : "📁 setup only (no remote trigger) round $(round)"
+        # The remote workflow must always run so the runner fetches the
+        # package and commits the code/docs subset back to the branch --
+        # that's independent of whether checks run. run_checks only
+        # controls whether runner_precheck.jl's PackageScanner step executes
+        # (baked into the script by write_runner_script above); the commit
+        # message here must keep the "[trigger remote]" marker in both
+        # cases so precheck.yml's `if:` picks up the push. (It must NOT
+        # appear in the runner's own result-commit message, or every push
+        # would re-trigger the workflow in a loop.)
+        commit_msg = run_checks ? "[trigger remote] for round $(round) 🎯" : "[trigger remote] (setup only, no checks) round $(round) 📁"
         cmd = """
         git add .
         git commit -m '$commit_msg'
@@ -197,10 +229,9 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         """
         run(Cmd(`sh -c $cmd`, dir=repoloc))
 
-        if run_checks
-            @info "Monitor workflow at: $(r.github_url)/actions"
-        else
-            @info "run_checks=false — files pushed, no remote workflow triggered"
+        @info "Monitor workflow at: $(r.github_url)/actions"
+        if !run_checks
+            @info "run_checks=false — the runner will still fetch & commit the package, but PackageScanner precheck will be skipped"
         end
     end
 
@@ -450,6 +481,35 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                     end
                 end
                 @info "✓ Wrote \$(length(rels)) path(s) to generated/force-add-files.txt"
+            end
+
+            # ── Cap oversized generated report files ───────────────────────────
+            # A full copy goes to a permanent Dropbox link (see large_reports_url
+            # in _variables.yml) instead of a GitHub Actions artifact: paper repos
+            # are private and authors never get repo access, so an artifact link
+            # would be unreachable to them -- and artifacts expire after 90 days
+            # regardless. The Dropbox folder link does not expire.
+            let max_bytes = 5 * 1024 * 1024
+                gen_dir = joinpath(ENV["GITHUB_WORKSPACE"], "generated")
+                reports_url = get(vars, "large_reports_url", nothing)
+                if isdir(gen_dir) && !isnothing(reports_url) && haskey(ENV, "JPE_DBOX_APPS")
+                    reports_dest = joinpath(ENV["JPE_DBOX_APPS"], vars["dropbox_rel_path"], "large-reports")
+                    for f in readdir(gen_dir; join=true)
+                        (isfile(f) && endswith(f, ".md")) || continue
+                        sz = filesize(f)
+                        sz > max_bytes || continue
+                        fname = basename(f)
+                        lines = countlines(f)
+                        size_mb = round(sz / 1024^2, digits=1)
+                        mkpath(reports_dest)
+                        cp(f, joinpath(reports_dest, fname); force=true)
+                        open(f, "w") do fio
+                            println(fio, "> **Note**: This list contains \$lines entries (\$size_mb MB) — too large to embed in the report.")
+                            println(fio, "> The full list is available here: <\$reports_url>")
+                        end
+                        @info "Capped \$fname (\$size_mb MB, \$lines lines) — full copy sent to Dropbox"
+                    end
+                end
             end
         else
             @info "run_checks=false — package fetched, skipping PackageScanner precheck"
