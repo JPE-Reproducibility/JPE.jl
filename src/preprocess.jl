@@ -200,7 +200,7 @@ function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_f
         commit_msg = run_checks ? "🚀 prechecks round $(round)" : "📁 setup only (no checks) round $(round)"
         cmd = """
         git add .
-        [ -s generated/force-add-files.txt ] && xargs git add -f < generated/force-add-files.txt
+        [ -s generated/force-add-files.txt ] && while IFS= read -r f; do git add -f -- "\$f"; done < generated/force-add-files.txt
         git commit -m '$commit_msg'
         git push origin $branch
         """
