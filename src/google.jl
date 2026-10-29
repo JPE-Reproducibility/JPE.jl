@@ -526,7 +526,7 @@ function retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Date
     already_former = intersect(emails, former.email)
     candidates = setdiff(emails, already_former)
 
-    mask = in.(confirmed.email, Ref(candidates))
+    mask = coalesce.(in.(confirmed.email, Ref(candidates)), false)
     to_retire = confirmed[mask, :]
     not_found = setdiff(candidates, to_retire.email)
 
