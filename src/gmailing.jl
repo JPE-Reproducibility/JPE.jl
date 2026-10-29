@@ -542,6 +542,40 @@ function replicator_gift_email_body(first, title, url, password)
     string(m1, signature())
 end
 
+function gmail_farewell(first, email)
+    subject = "Thank you for your time with the JPE Reproducibility Team"
+    body = gmail_farewell_body(first)
+    gmail_draft(
+        [author_email(email)],
+        subject,
+        body,
+        []
+    )
+end
+
+function gmail_farewell_body(first)
+    m1 = """
+    Dear $first,
+    <br>
+    <br>
+    I am writing to let you know that you have been removed from the JPE Reproducibility Team.
+    <br>
+    <br>
+    Practically, this means that this is no longer an ongoing engagement, so please do not list it as such on your CV going forward. I will also be removing your access to our GitHub organization and our Slack workspace.
+    <br>
+    <br>
+    I want to take this opportunity to thank you for your commitment to this work during your time with us. What we deliver as a service depends 100% on your effort, and I am grateful for the time you have dedicated to this.
+    <br>
+    <br>
+    If you ever wish to come back, you would be very welcome; just reach out and we will see where we can fit you back in.
+    <br>
+    <br>
+    With kind regards,<br>
+    Florian
+    """
+    string(m1, signature())
+end
+
 function signature()
     """
     <br>
