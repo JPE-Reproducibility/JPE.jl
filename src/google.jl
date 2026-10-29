@@ -494,22 +494,31 @@ end
 
 Moves replicators identified by `emails` from the active `confirmed` tab of
 the replicators Google Sheet to the `former_replicators` history tab,
-recording an inferred start date ([`replicator_start_date`](@ref)) and the
-given `left` date. Removes the corresponding rows from `confirmed`.
+recording their GitHub username, an inferred start date
+([`replicator_start_date`](@ref)), and the given `left` date. Removes the
+corresponding rows from `confirmed`, and removes each replicator's GitHub
+username (where on file) from the `JPE-Reproducibility` GitHub organization
+via [`gh_remove_org_member`](@ref).
 
 Emails already present in `former_replicators`, or not found in `confirmed`,
 are skipped (and reported) rather than erroring out the whole batch.
+Replicators with no GitHub username on file are retired from the sheet but
+skipped for org removal (reported in `no_gh_username`).
 
-Under `JPE_TEST=1`, no sheet writes happen; the function only logs what
-would have been done.
+Under `JPE_TEST=1`, no sheet writes and no GitHub org removal happen; the
+function only logs what would have been done.
 
-Returns a `NamedTuple` with `retired`, `not_found`, and `already_former`
-email vectors.
+Returns a `NamedTuple` with `retired`, `not_found`, `already_former`
+(email vectors), `gh_removed`, `gh_failed`, and `no_gh_username` (username/
+email vectors).
 """
 function retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Dates.today(),
                               auth::Function = gs4_auth,
                               get_confirmed::Function = gs4_get_replicators,
-                              get_former::Function = gs4_get_former_replicators)
+                              get_former::Function = gs4_get_former_replicators,
+                              remove_org_member::Function = gh_remove_org_member,
+                              append_former::Function = gs4_append_former_replicators,
+                              overwrite_confirmed::Function = gs4_overwrite_confirmed)
     auth()
     confirmed = get_confirmed()
     former = get_former()
@@ -521,21 +530,42 @@ function retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Date
     to_retire = confirmed[mask, :]
     not_found = setdiff(candidates, to_retire.email)
 
+    gh_removed = String[]
+    gh_failed = String[]
+    no_gh_username = String[]
+
     if nrow(to_retire) > 0
         to_retire = copy(to_retire)
         to_retire.started = replicator_start_date.(to_retire.email)
         to_retire.left = fill(left, nrow(to_retire))
+        DataFrames.rename!(to_retire, "Name" => "name", "OS" => "os", "github username" => "github_username")
 
-        if get(ENV, "JPE_TEST", "0") == "1"
+        test_mode = get(ENV, "JPE_TEST", "0") == "1"
+
+        for r in eachrow(to_retire)
+            username = r.github_username
+            if ismissing(username) || isempty(strip(username))
+                push!(no_gh_username, r.email)
+            elseif test_mode
+                @info "JPE_TEST: would remove $username from the GitHub org"
+            elseif remove_org_member(username)
+                push!(gh_removed, username)
+            else
+                push!(gh_failed, username)
+            end
+        end
+
+        if test_mode
             @info "JPE_TEST: would retire $(to_retire.email) as of $left"
         else
-            gs4_append_former_replicators(select(to_retire, :name, :email, :os, :started, :left))
+            append_former(select(to_retire, :name, :email, :os, :github_username, :started, :left))
             remaining = confirmed[.!mask, :]
-            gs4_overwrite_confirmed(remaining)
+            overwrite_confirmed(remaining)
         end
     end
 
-    return (retired = to_retire.email, not_found = not_found, already_former = already_former)
+    return (retired = to_retire.email, not_found = not_found, already_former = already_former,
+            gh_removed = gh_removed, gh_failed = gh_failed, no_gh_username = no_gh_username)
 end
 
 retire_replicator!(email::AbstractString; left::Date = Dates.today()) =
