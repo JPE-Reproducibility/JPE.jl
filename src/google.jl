@@ -446,6 +446,101 @@ function read_replicators()
 
 end
 
+function gs4_get_former_replicators()
+    rcopy(R"""
+    googlesheets4::read_sheet($(gs_replicators_id()), sheet = 'former_replicators')
+    """)
+end
+
+function gs4_append_former_replicators(d::DataFrame)
+    R"""
+    googlesheets4::sheet_append($(gs_replicators_id()), data = $(d), sheet = 'former_replicators')
+    """
+end
+
+function gs4_overwrite_confirmed(d::DataFrame)
+    R"""
+    googlesheets4::sheet_write(data = $(d), ss = $(gs_replicators_id()), sheet = "confirmed")
+    """
+end
+
+"""
+    replicator_start_date(email::AbstractString)
+
+Infers the date a replicator first became active from the local database,
+as the earliest `date_assigned_repl` (iterations, columns `replicator1`/
+`replicator2`) or `timestamp` (reports, columns `email_of_replicator_1`/
+`email_of_replicator_2`) recorded against `email`. Returns `missing` if no
+record is found.
+"""
+function replicator_start_date(email::AbstractString)
+    with_db() do con
+        q = """
+        SELECT MIN(d) AS start_date FROM (
+            SELECT date_assigned_repl AS d FROM iterations WHERE replicator1 = ? OR replicator2 = ?
+            UNION ALL
+            SELECT CAST(timestamp AS DATE) AS d FROM reports WHERE email_of_replicator_1 = ? OR email_of_replicator_2 = ?
+        ) sub
+        WHERE d IS NOT NULL
+        """
+        stmt = DBInterface.prepare(con, q)
+        df = DataFrame(DBInterface.execute(stmt, (email, email, email, email)))
+        nrow(df) == 0 ? missing : df.start_date[1]
+    end
+end
+
+"""
+    retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Dates.today())
+
+Moves replicators identified by `emails` from the active `confirmed` tab of
+the replicators Google Sheet to the `former_replicators` history tab,
+recording an inferred start date ([`replicator_start_date`](@ref)) and the
+given `left` date. Removes the corresponding rows from `confirmed`.
+
+Emails already present in `former_replicators`, or not found in `confirmed`,
+are skipped (and reported) rather than erroring out the whole batch.
+
+Under `JPE_TEST=1`, no sheet writes happen; the function only logs what
+would have been done.
+
+Returns a `NamedTuple` with `retired`, `not_found`, and `already_former`
+email vectors.
+"""
+function retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Dates.today(),
+                              auth::Function = gs4_auth,
+                              get_confirmed::Function = gs4_get_replicators,
+                              get_former::Function = gs4_get_former_replicators)
+    auth()
+    confirmed = get_confirmed()
+    former = get_former()
+
+    already_former = intersect(emails, former.email)
+    candidates = setdiff(emails, already_former)
+
+    mask = in.(confirmed.email, Ref(candidates))
+    to_retire = confirmed[mask, :]
+    not_found = setdiff(candidates, to_retire.email)
+
+    if nrow(to_retire) > 0
+        to_retire = copy(to_retire)
+        to_retire.started = replicator_start_date.(to_retire.email)
+        to_retire.left = fill(left, nrow(to_retire))
+
+        if get(ENV, "JPE_TEST", "0") == "1"
+            @info "JPE_TEST: would retire $(to_retire.email) as of $left"
+        else
+            gs4_append_former_replicators(select(to_retire, :name, :email, :os, :started, :left))
+            remaining = confirmed[.!mask, :]
+            gs4_overwrite_confirmed(remaining)
+        end
+    end
+
+    return (retired = to_retire.email, not_found = not_found, already_former = already_former)
+end
+
+retire_replicator!(email::AbstractString; left::Date = Dates.today()) =
+    retire_replicators!([email]; left = left)
+
 """
 reads the entire google form with reports from replicators
 """
