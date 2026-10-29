@@ -458,10 +458,22 @@ function gs4_append_former_replicators(d::DataFrame)
     """
 end
 
-function gs4_overwrite_confirmed(d::DataFrame)
-    R"""
-    googlesheets4::sheet_write(data = $(d), ss = $(gs_replicators_id()), sheet = "confirmed")
-    """
+"""
+    gs4_delete_confirmed_rows(sheet_rows::Vector{Int})
+
+Deletes the given 1-indexed sheet row numbers (as they appear in the Google
+Sheets UI, header included) from the `confirmed` tab, shifting remaining
+rows up. Unlike rewriting the whole sheet, this preserves formatting, data
+validation (e.g. dropdowns), and conditional formatting on untouched rows
+and columns.
+"""
+function gs4_delete_confirmed_rows(sheet_rows::Vector{Int})
+    for row in sort(sheet_rows, rev = true)
+        rng = "confirmed!$(row):$(row)"
+        R"""
+        googlesheets4::range_delete($(gs_replicators_id()), range = $(rng), shift = "up")
+        """
+    end
 end
 
 """
@@ -508,6 +520,11 @@ skipped for org removal (reported in `no_gh_username`).
 Under `JPE_TEST=1`, no sheet writes and no GitHub org removal happen; the
 function only logs what would have been done.
 
+Removing rows from `confirmed` is done via targeted row deletion
+([`gs4_delete_confirmed_rows`](@ref)), not a full-sheet rewrite, so
+formatting, data validation (e.g. dropdowns), and conditional formatting on
+the rest of the sheet are left untouched.
+
 Returns a `NamedTuple` with `retired`, `not_found`, `already_former`
 (email vectors), `gh_removed`, `gh_failed`, and `no_gh_username` (username/
 email vectors).
@@ -518,7 +535,7 @@ function retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Date
                               get_former::Function = gs4_get_former_replicators,
                               remove_org_member::Function = gh_remove_org_member,
                               append_former::Function = gs4_append_former_replicators,
-                              overwrite_confirmed::Function = gs4_overwrite_confirmed)
+                              delete_confirmed_rows::Function = gs4_delete_confirmed_rows)
     auth()
     confirmed = get_confirmed()
     former = get_former()
@@ -527,6 +544,8 @@ function retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Date
     candidates = setdiff(emails, already_former)
 
     mask = coalesce.(in.(confirmed.email, Ref(candidates)), false)
+    # +1 to account for the header row, so these are 1-indexed Sheets row numbers
+    sheet_rows = findall(mask) .+ 1
     to_retire = confirmed[mask, :]
     not_found = setdiff(candidates, to_retire.email)
 
@@ -559,8 +578,7 @@ function retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Date
             @info "JPE_TEST: would retire $(to_retire.email) as of $left"
         else
             append_former(select(to_retire, :name, :email, :os, :github_username, :started, :left))
-            remaining = confirmed[.!mask, :]
-            overwrite_confirmed(remaining)
+            delete_confirmed_rows(sheet_rows)
         end
     end
 

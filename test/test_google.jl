@@ -68,7 +68,7 @@ end
 
         removed_calls = String[]
         appended = Ref{Any}(nothing)
-        overwritten = Ref{Any}(nothing)
+        deleted_rows = Ref{Any}(nothing)
 
         r = JPE.retire_replicators!(["alice@x.com", "carol@x.com"];
             left = Date(2026, 1, 1),
@@ -77,7 +77,7 @@ end
             get_former = () -> former,
             remove_org_member = u -> (push!(removed_calls, u); u != "bob-gh"),
             append_former = d -> (appended[] = d),
-            overwrite_confirmed = d -> (overwritten[] = d)
+            delete_confirmed_rows = rows -> (deleted_rows[] = rows)
         )
 
         @test r.retired == ["alice@x.com", "carol@x.com"]
@@ -87,7 +87,9 @@ end
         @test removed_calls == ["alice-gh"]
 
         @test appended[].email == ["alice@x.com", "carol@x.com"]
-        @test overwritten[].email == ["bob@x.com"]
+        # Alice is confirmed-row 1, Carol is confirmed-row 3; +1 for the header
+        # row gives their 1-indexed Sheets row numbers
+        @test deleted_rows[] == [2, 4]
     finally
         if isnothing(old_test_env)
             delete!(ENV, "JPE_TEST")
