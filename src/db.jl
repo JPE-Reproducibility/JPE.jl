@@ -571,6 +571,13 @@ function db_filter_status(status1::String,status2::String)
     end
 end
 
+function db_filter_status_duration(x::Integer = 100)
+    with_db() do con
+        df = DBInterface.execute(con, "SELECT * FROM papers WHERE status = ?", ("with_author",)) |> DataFrame
+        filter(row -> !ismissing(row.date_with_authors) && Dates.value(Dates.today() - row.date_with_authors) > x, df)
+    end
+end
+
 function db_filter_paper(id)
     with_db() do con
         DBInterface.execute(con, "SELECT * FROM papers WHERE paper_id = ?", (id,)) |> DataFrame

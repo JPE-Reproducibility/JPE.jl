@@ -29,7 +29,6 @@ using Cleaner
 using RCall
 using PyCall
 using Chain
-using Infiltrator
 using CSV
 using DataFramesMeta
 using PrettyTables  # re-exports Crayons

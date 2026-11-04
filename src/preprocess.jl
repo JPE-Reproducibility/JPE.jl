@@ -1,5 +1,5 @@
 
-function preprocess2(paperID; which_round = nothing, max_pkg_size_gb = 10, max_file_size_gb = 2, run_checks = true)
+function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_file_size_gb = 2, run_checks = true)
         
     # get row from "iterations"
     p = db_filter_paper(paperID)
@@ -300,7 +300,7 @@ plain curl call to a public Dropbox shared link stored in `_variables.yml`.
 A local-copy fallback is retained for local preprocessing runs.
 
 SECURITY UPGRADE PATH (dormant): to switch to password-protected download,
-re-enable the password block in this function and in preprocess2(). See
+re-enable the password block in this function and in preprocess(). See
 PROPOSAL.md for the full spec.
 """
 function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_checks::Bool = true)
@@ -523,7 +523,7 @@ end
 """
     revoke_preprocessing_link(paperID, round)
 
-Revoke the public Dropbox shared link that was created during `preprocess2()`.
+Revoke the public Dropbox shared link that was created during `preprocess()`.
 Call this after remote preprocessing finishes successfully to close the link.
 """
 function revoke_preprocessing_link(paperID, round)
@@ -534,7 +534,7 @@ function revoke_preprocessing_link(paperID, round)
     r = rt[1, :]
 
     # Retrieve link id from the cloned repo's _variables.yml
-    # (we re-use the local temp clone path convention from preprocess2)
+    # (we re-use the local temp clone path convention from preprocess)
     d = tempdir()
     repoloc = joinpath(d, string(paperID, "-", round))
 
