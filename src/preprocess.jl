@@ -132,6 +132,22 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     link_url = dbox_link_at_path(dropbox_path, dbox_token, expiry = 15)
     isnothing(link_url) && error("dbox_link_at_path returned nothing for $dropbox_path — check Dropbox credentials and path")
 
+    # Same mechanism, second link: the paper's LaTeX source, so the runner
+    # (local or gh-runner) can fetch it too, not just the replication package.
+    # Prefer paper-author/ (clean author upload, #30) if it has any .tex,
+    # else fall back to paper-appendices/ (pre-#30 papers). See
+    # JPE-Reproducibility/JPE.jl#34.
+    author_subpath = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "paper-author")
+    appendices_subpath = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "paper-appendices")
+    author_dir_full = string(ENV["JPE_DBOX_APPS"], author_subpath)
+    appendices_dir_full = string(ENV["JPE_DBOX_APPS"], appendices_subpath)
+    chosen_paper_dir = find_paper_source_dir(author_dir_full, appendices_dir_full)
+    paper_source_subfolder = chosen_paper_dir == author_dir_full ? "paper-author" : "paper-appendices"
+    paper_dropbox_path = chosen_paper_dir == author_dir_full ? author_subpath : appendices_subpath
+    @info "Creating public Dropbox link for $paper_dropbox_path"
+    paper_link_url = dbox_link_at_path(paper_dropbox_path, dbox_token, expiry = 15)
+    isnothing(paper_link_url) && error("dbox_link_at_path returned nothing for $paper_dropbox_path — check Dropbox credentials and path")
+
     # Permanent (no expiry) shared link to a per-round Dropbox folder that holds
     # full copies of any generated report file too large to embed in the repo
     # (e.g. a file listing capped by write_runner_script). Repos are private and
@@ -161,6 +177,7 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
         println(io, "package_max_file_size_gb: $(max_file_size_gb)")
         println(io, "package_max_pkg_size_gb: $(max_pkg_size_gb)")
         println(io, "large_reports_url: \"$(large_reports_url)\"")
+        println(io, "paper_source_subfolder: \"$(paper_source_subfolder)\"")
     end
 
     # add a run badge to the README and change title
@@ -214,7 +231,8 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
         ])
         withenv("SHELL" => "/opt/homebrew/bin/fish",
                 "GITHUB_WORKSPACE" => "$repoloc",
-                "DROPBOX_DOWNLOAD_URL" => replace(link_url, "dl=0" => "dl=1")) do
+                "DROPBOX_DOWNLOAD_URL" => replace(link_url, "dl=0" => "dl=1"),
+                "PAPER_DOWNLOAD_URL" => replace(paper_link_url, "dl=0" => "dl=1")) do
             res = chomp(read(run(Cmd(cmd)),String))
         end
         if run_checks
@@ -238,6 +256,7 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
         # runner
         # set secret on the repo before pushing
         run(`gh secret set DROPBOX_DOWNLOAD_URL --body $(replace(link_url, "dl=0" => "dl=1")) --repo $(r.gh_org_repo)`)
+        run(`gh secret set PAPER_DOWNLOAD_URL --body $(replace(paper_link_url, "dl=0" => "dl=1")) --repo $(r.gh_org_repo)`)
     
         branch = chomp(read(Cmd(`git rev-parse --abbrev-ref HEAD`,dir = repoloc), String))
         # The remote workflow must always run so the runner fetches the
@@ -444,6 +463,70 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
 
         if !isdir(dest_path)
             error("Package directory not found at \$dest_path after download/copy step")
+        end
+
+        # ── Fetch the paper source (mirrors the replication-package fetch above) ──
+        # See JPE-Reproducibility/JPE.jl#34. Fetches whichever folder preprocess()
+        # chose (paper_source_subfolder in _variables.yml: paper-author/ if the
+        # author uploaded one, #30, else the legacy paper-appendices/) into
+        # paper-source/ in the workspace. Best-effort: failures here must not
+        # abort the package precheck, which is the primary purpose of this run --
+        # Stage C/D consumers just see no paper-source/ and skip accordingly.
+        paper_dest_path = joinpath(ENV["GITHUB_WORKSPACE"], "paper-source")
+        already_have_paper = isdir(paper_dest_path) && !isempty(readdir(paper_dest_path))
+
+        paper_url = let u = get(ENV, "PAPER_DOWNLOAD_URL", nothing)
+            (isnothing(u) || isempty(u)) ? nothing : u
+        end
+
+        paper_downloaded_ok = if already_have_paper
+            @info "Paper source already present at \$paper_dest_path — skipping download/copy"
+            true
+        elseif !isnothing(paper_url)
+            @info "Downloading paper source from secret Dropbox link..."
+            try
+                run(`curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 -C - -o paper.zip \$paper_url`)
+                true
+            catch e
+                @warn "paper source curl download failed, will try local fallback" exception=e
+                false
+            end
+        else
+            @info "No remote paper link configured — using local Dropbox path"
+            false
+        end
+
+        if !paper_downloaded_ok
+            try
+                paper_source_path = joinpath(ENV["JPE_DBOX_APPS"], vars["dropbox_rel_path"], vars["paper_source_subfolder"])
+                if isdir(paper_source_path)
+                    isdir(paper_dest_path) && rm(paper_dest_path; recursive=true, force=true)
+                    PackageScanner.mycp(paper_source_path, paper_dest_path; recursive=true, force=true)
+                    @info "✓ Paper source copied from local Dropbox"
+                else
+                    @warn "Paper source not found at \$paper_source_path — skipping (no paper available for Stage C)"
+                end
+            catch e
+                @warn "Could not fetch paper source — skipping (no paper available for Stage C)" exception=e
+            end
+        elseif isfile("paper.zip")
+            @info "Unzipping paper source archive..."
+            tmp_dir = mktempdir()
+            try
+                run(`unzip -oq paper.zip -d \$tmp_dir`)
+            catch e
+                @warn "unzip of paper source exited non-zero (may still be okay)" exception=e
+            end
+            rm("paper.zip"; force=true)
+
+            isdir(paper_dest_path) && rm(paper_dest_path; recursive=true, force=true)
+            mkpath(paper_dest_path)
+            for f in readdir(tmp_dir; join=true)
+                cp(f, joinpath(paper_dest_path, basename(f)); force=true)
+            end
+            rm_git(paper_dest_path)
+            rm(tmp_dir; recursive=true, force=true)
+            @info "✓ Paper source unzip complete"
         end
 
         # ── PackageScanner precheck ────────────────────────────────────────────
