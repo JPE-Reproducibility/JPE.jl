@@ -71,7 +71,7 @@ def build_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def send_email(to, subject, html_body, sent_from, attachments=None):
+def send_email(to, subject, html_body, sent_from, attachments=None, cc=None):
     """
     Send an email with optional attachments.
     """
@@ -81,6 +81,8 @@ def send_email(to, subject, html_body, sent_from, attachments=None):
     msg["To"] = to
     msg["From"] = sent_from
     msg["Subject"] = subject
+    if cc:
+        msg["Cc"] = cc
     msg.set_content("This is a MIME-formatted message.")
     msg.add_alternative(html_body, subtype="html")
 
@@ -100,7 +102,7 @@ def send_email(to, subject, html_body, sent_from, attachments=None):
     return send_result
 
 
-def create_draft(to, subject, html_body, sent_from, attachments=None):
+def create_draft(to, subject, html_body, sent_from, attachments=None, cc=None):
     """
     Create a Gmail draft with optional attachments.
     """
@@ -110,6 +112,8 @@ def create_draft(to, subject, html_body, sent_from, attachments=None):
     msg["To"] = to
     msg["From"] = sent_from
     msg["Subject"] = subject
+    if cc:
+        msg["Cc"] = cc
     msg.set_content("This is a MIME-formatted message.")
     msg.add_alternative(html_body, subtype="html")
 

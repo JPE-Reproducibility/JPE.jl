@@ -1,6 +1,7 @@
 
 
 JO_email() = haskey(ENV,"JPE_TEST") ? "florian.oswald@unito.it" : "jpe@press.uchicago.edu"
+journal_manager_email() = haskey(ENV,"JPE_TEST") ? "florian.oswald@unito.it" : "cfritsch@uchicago.edu"
 author_email(mail::String) = haskey(ENV,"JPE_TEST") ? "florian.oswald@unito.it" : mail
 
 function gmail_assign(first1,email1,caseID,download_url, repo_url; first2 = nothing,email2 = nothing,back = false)
@@ -520,6 +521,55 @@ function gmail_file_request_body(first,paperID,title,url,paper_url = nothing)
     string(m1,signature())
 end
 
+function gmail_late_author(first,paperID,title,days,email1;email2 = nothing, draft = true, cc = journal_manager_email())
+    to = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
+    body = gmail_late_author_body(first,paperID,title,days)
+    subject = "Reminder: Outstanding Replication Package for $paperID"
+    if draft
+        gmail_draft(
+            to,
+            subject,
+            body,
+            [];
+            cc = cc
+        )
+    else
+        gmail_send(
+            to,
+            subject,
+            body,
+            [];
+            cc = cc
+        )
+    end
+end
+
+function gmail_late_author_body(first,paperID,title,days)
+    @debug first paperID title days
+
+    m1 = """
+    Dear $first,
+    <br>
+    <br>
+    I am writing to follow up on your replication package for the paper titled \"$title\", with manuscript ID $paperID.
+    <br>
+    <br>
+    I have now been waiting $days days for this package. Let me remind you that until your package does not clear our reproducibility checks, your paper will not be published and remains in conditional acceptance status (i.e. <i>not</i> forthcoming).
+    <br>
+    <br>
+    Please let me know your expected timeline for submitting the package, or let me know if you are facing any difficulties that are delaying it.
+    <br>
+    <br>
+    I'm looking forward to hearing from you soon.
+    <br>
+    <br>
+    With kind regards,<br>
+    Florian
+    """
+
+    string(m1,signature())
+end
+
 function replicator_gift_email_body(first, title, url, password)
     m1 = """
     Dear $first,
@@ -591,12 +641,12 @@ function signature()
 end
 
 # low level functions interfacing with the python client
-function gmail_send(to,subject,body,attachments; from = "'JPE Data Editor' <jpe.dataeditor@gmail.com>")
-    py"send_email"(to,subject,body,from,attachments)
+function gmail_send(to,subject,body,attachments; from = "'JPE Data Editor' <jpe.dataeditor@gmail.com>", cc = nothing)
+    py"send_email"(to,subject,body,from,attachments,cc)
 end
 
-function gmail_draft(to,subject,body,attachments; from = "'JPE Data Editor' <jpe.dataeditor@gmail.com>")
-    py"create_draft"(to,subject,body,from,attachments)
+function gmail_draft(to,subject,body,attachments; from = "'JPE Data Editor' <jpe.dataeditor@gmail.com>", cc = nothing)
+    py"create_draft"(to,subject,body,from,attachments,cc)
 end
 
 

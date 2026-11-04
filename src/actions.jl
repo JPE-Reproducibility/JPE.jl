@@ -8,6 +8,22 @@ function de_waiting()
     select(p,:paper_id,:paper_slug,:round,:surname_of_author, :status)
 end
 
+"""
+prepare a draft reminder email for every paper with status `with_author`
+that has been waiting more than `n` days (default 100)
+"""
+function send_late(n::Integer = 100)
+    p = db_filter_status_duration(n)
+
+    for r in eachrow(p)
+        days = Dates.value(Dates.today() - r.date_with_authors)
+        gmail_late_author(r.firstname_of_author, r.paper_id, r.title, days, r.email_of_author,
+            email2 = ismissing(r.email_of_second_author) ? nothing : r.email_of_second_author)
+        println("drafted late reminder for $(r.paper_slug) ($days days)")
+    end
+    return p
+end
+
 function de_process_waiting_reports()
     p = db_filter_status("replicator_back_de")
 
