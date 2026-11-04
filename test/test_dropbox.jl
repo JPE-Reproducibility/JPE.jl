@@ -54,7 +54,7 @@ end
         @test startswith(link_url, "https://")
 
         # 3. calling again on an already-shared folder must return the same
-        #    link rather than erroring (this is what preprocess2 relies on
+        #    link rather than erroring (this is what preprocess relies on
         #    when re-running preprocessing for the same round)
         link_url2 = JPE.dbox_link_at_path(test_folder, token)
         @test link_url2 == link_url

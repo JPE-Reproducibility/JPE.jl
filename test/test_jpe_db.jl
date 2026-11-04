@@ -303,7 +303,7 @@ end
 @testset "with_jpe_test_db: dropbox_password round-trip" begin
 
     with_jpe_test_db() do
-        # Simulate what preprocess2() does: store a password in iterations.
+        # Simulate what preprocess() does: store a password in iterations.
         test_password = "AbCd1234EfGh5678"
         JPE.robust_db_operation() do con
             DBInterface.execute(con, """
@@ -354,7 +354,7 @@ end
 
 @testset "with_jpe_test_db: display slack message works" begin
     with_jpe_test_db() do
-        # Simulate what preprocess2() does: store a password in iterations.
+        # Simulate what preprocess() does: store a password in iterations.
         test_password = "AbCd1234EfGh5678"
         JPE.robust_db_operation() do con
             DBInterface.execute(con, """

@@ -76,9 +76,9 @@ function dispatch()
             pp_menu = RadioMenu(["run full preprocess","fetch only (no checks)","skip - already preprocessed"])
             pp_choice = request(pp_menu)
             if pp_choice == 1
-                preprocess2(r.paper_id)
+                preprocess(r.paper_id)
             elseif pp_choice == 2
-                preprocess2(r.paper_id,run_checks = false)
+                preprocess(r.paper_id,run_checks = false)
             else
                 println(">>> skipping preprocess for $cid (already done)")
             end
@@ -103,7 +103,7 @@ end
 """
     audit_gh_runner_backlog() -> DataFrame
 
-Find iterations dispatched via the self-hosted gh-runner (`preprocess2(...)` with
+Find iterations dispatched via the self-hosted gh-runner (`preprocess(...)` with
 the "gh-runner" choice, recorded as `iterations.preprocess_mode == "gh-runner"`)
 whose `replication-package/` folder never landed on the repo branch — i.e. the
 `precheck.yml` workflow run never completed (e.g. the self-hosted runner machine
@@ -135,7 +135,7 @@ end
 Re-trigger `precheck.yml` (via `workflow_dispatch`) for each row of `missing`
 (as returned by `audit_gh_runner_backlog`). Use once the self-hosted runner is
 confirmed back online — this re-fires the existing branch's workflow directly,
-without repeating the Dropbox-link/repo-setup steps of `preprocess2`.
+without repeating the Dropbox-link/repo-setup steps of `preprocess`.
 """
 function redispatch_gh_runner(missing::DataFrame)
     for r in eachrow(missing)
@@ -640,7 +640,7 @@ function get_dropbox_password(paperID, round)
     end
     password = iter[1, :dropbox_password]
     if ismissing(password) || isnothing(password)
-        error("No password stored for $paperID R$round — was preprocess2() run after the schema migration?")
+        error("No password stored for $paperID R$round — was preprocess() run after the schema migration?")
     end
 
     p = db_filter_paper(paperID)
