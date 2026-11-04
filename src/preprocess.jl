@@ -51,14 +51,18 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     # genuine local re-fetch, where it would otherwise let
     # runner_precheck.jl's "already_have_package" check skip that fetch.
 
-    # Stage C claims extraction (JPE-Reproducibility/JPE.jl#29). This is a
-    # JPE.jl-local step (claude CLI / Pro-subscription auth isn't available
-    # on the gh-runner), gated so it never silently re-spends on an unchanged
-    # paper: skip if claims.json is already in this round's cloned repo
-    # (checked by extract_paper_claims itself), else default on for round 1,
-    # else ask. An explicit run_claims_extraction=true/false always wins.
-    claims_out_dir = joinpath(repoloc, "generated")
-    claims_cached = isfile(joinpath(claims_out_dir, "claims.json"))
+    # Stage C claims extraction (JPE-Reproducibility/JPE.jl#29, folded into
+    # the runner script itself by JPE-Reproducibility/JPE.jl#34 -- it used to
+    # run here, eagerly, straight off the local Dropbox paper-appendices/
+    # paper-author dirs, which meant it only ever worked in `local` mode and
+    # needed a manual return trip in `gh-runner` mode. Now it runs inside
+    # write_runner_script's generated script, against paper-source/ (fetched
+    # by that same script, see the Dropbox link block below), so one
+    # preprocess() call does it in either mode. Only the decision of
+    # *whether* to run it stays here: skip if claims.json is already in this
+    # round's cloned repo, else default on for round 1, else ask. An explicit
+    # run_claims_extraction=true/false always wins.
+    claims_cached = isfile(joinpath(repoloc, "generated", "claims.json"))
     do_claims = if !isnothing(run_claims_extraction)
         run_claims_extraction
     elseif claims_cached
@@ -66,16 +70,8 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     elseif round == 1
         true
     else
-        println(">>> Run paper claims crosscheck (Stage C) for $paperID round $round?")
+        println(">>> Run paper claims extraction (Stage C) for $paperID round $round?")
         request(RadioMenu(["Yes", "No"])) == 1
-    end
-
-    if do_claims
-        try
-            extract_paper_claims(paperID; round = round, out_dir = claims_out_dir)
-        catch e
-            @warn "claims extraction failed for $paperID round $round: $e"
-        end
     end
 
     # check size of replication packge on dropbox and decide what to do
@@ -191,7 +187,7 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     sync_template_files!(repoloc)
 
     # Create runner script
-    write_runner_script(repoloc, no_data_scan, run_checks = run_checks)
+    write_runner_script(repoloc, no_data_scan, run_checks = run_checks, do_claims = do_claims)
 
     # git branches
     branch = gh_get_default_branch(r.gh_org_repo)
@@ -346,15 +342,27 @@ For remote execution the script downloads the replication package via a
 plain curl call to a public Dropbox shared link stored in `_variables.yml`.
 A local-copy fallback is retained for local preprocessing runs.
 
+If `do_claims` is true, the script also runs Stage C claims extraction
+(JPE-Reproducibility/JPE.jl#34) against whatever landed in `paper-source/`
+right above: `claims.json` already present means "skip" (no force-rerun from
+here -- use `extract_paper_claims(...; force=true)` manually for that), an
+ambiguous or missing `.tex` source means "skip and write
+generated/report-claims-extraction.md explaining why" (no interactive
+disambiguation is possible in an unattended script -- same reasoning as the
+rest of this unattended run).
+
 SECURITY UPGRADE PATH (dormant): to switch to password-protected download,
 re-enable the password block in this function and in preprocess(). See
 PROPOSAL.md for the full spec.
 """
-function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_checks::Bool = true)
+function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_checks::Bool = true, do_claims::Bool = false)
+    claims_helpers_src = read(joinpath(@__DIR__, "claims_runner_helpers.jl"), String)
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
         write(io, """
         using YAML
         using PackageScanner
+        using JSON
+        using Dates
 
         function rm_git(extract_dir)
             for (root, dirs, files) in walkdir(extract_dir)
@@ -527,6 +535,77 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
             rm_git(paper_dest_path)
             rm(tmp_dir; recursive=true, force=true)
             @info "✓ Paper source unzip complete"
+        end
+
+        # ── Stage C: LLM claims extraction (JPE-Reproducibility/JPE.jl#34) ────
+        # Shared helpers (claude CLI invocation, prompt, JSON schema) are
+        # spliced in verbatim from claims_runner_helpers.jl -- see JPE.jl's
+        # write_runner_script for the single source of truth.
+        $(claims_helpers_src)
+
+        if $(do_claims)
+            claims_dir = joinpath(ENV["GITHUB_WORKSPACE"], "generated")
+            mkpath(claims_dir)
+            claims_json_path = joinpath(claims_dir, "claims.json")
+            claims_report_path = joinpath(claims_dir, "report-claims-extraction.md")
+
+            if isfile(claims_json_path)
+                @info "claims.json already exists — skipping Stage C re-extraction"
+            elseif !isdir(paper_dest_path) || isempty(readdir(paper_dest_path))
+                @warn "no paper source available — skipping Stage C claims extraction"
+                open(claims_report_path, "w") do rio
+                    println(rio, "# Stage C: Claims Extraction")
+                    println(rio, "")
+                    println(rio, "**Skipped**: no paper source was available (`paper-source/` empty or missing).")
+                end
+            else
+                tex_result = PackageScanner.extract_latex_text(paper_dest_path)
+                if tex_result.ambiguous
+                    @warn "ambiguous paper source — multiple candidate main .tex files, skipping Stage C"
+                    open(claims_report_path, "w") do rio
+                        println(rio, "# Stage C: Claims Extraction")
+                        println(rio, "")
+                        println(rio, "**Skipped**: ambiguous paper source — multiple candidate main `.tex` files were found, and this unattended run cannot pick one:")
+                        println(rio, "")
+                        for root in tex_result.roots
+                            println(rio, "- `\$root`")
+                        end
+                        println(rio, "")
+                        println(rio, "Resolve manually from a JPE.jl session with `extract_paper_claims(paperID; main_files=[...])`, then re-run preprocess.")
+                    end
+                elseif isempty(tex_result.roots)
+                    @warn "no .tex source found under paper-source/ — skipping Stage C claims extraction"
+                    open(claims_report_path, "w") do rio
+                        println(rio, "# Stage C: Claims Extraction")
+                        println(rio, "")
+                        println(rio, "**Skipped**: no `.tex` source found under `paper-source/`. PDF fallback is not implemented.")
+                    end
+                else
+                    flattened_path = joinpath(paper_dest_path, "_flattened.tex")
+                    write(flattened_path, tex_result.text)
+                    try
+                        extraction = run_claude_claims_extraction(flattened_path)
+                        open(claims_json_path, "w") do jio
+                            JSON.print(jio, extraction.claims, 2)
+                        end
+                        open(claims_report_path, "w") do rio
+                            println(rio, "# Stage C: Claims Extraction")
+                            println(rio, "")
+                            println(rio, "**Done** (\$(Dates.now())). Extraction cost: \\\$\$(extraction.cost_usd)")
+                        end
+                        @info "✓ Stage C claims extraction complete, cost \\\$\$(extraction.cost_usd)"
+                    catch e
+                        @warn "Stage C claims extraction failed" exception=e
+                        open(claims_report_path, "w") do rio
+                            println(rio, "# Stage C: Claims Extraction")
+                            println(rio, "")
+                            println(rio, "**Failed**: \$e")
+                        end
+                    finally
+                        rm(flattened_path, force=true)
+                    end
+                end
+            end
         end
 
         # ── PackageScanner precheck ────────────────────────────────────────────

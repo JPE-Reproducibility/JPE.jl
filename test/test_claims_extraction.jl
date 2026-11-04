@@ -95,3 +95,38 @@ end
         @test result == cached
     end
 end
+
+@testset "write_runner_script - Stage C splice parses and wires in the helpers" begin
+    mktempdir() do repoloc
+        JPE.write_runner_script(repoloc, ["__MACOSX", "renv"]; run_checks = true, do_claims = true)
+        content = read(joinpath(repoloc, "runner_precheck.jl"), String)
+
+        # must be valid, complete Julia (a rename in claims_runner_helpers.jl
+        # that leaves a stale call site here would otherwise only be caught
+        # on the runner, mid-run)
+        parsed = Meta.parseall(content)
+        @test !(parsed isa Expr && parsed.head == :incomplete)
+
+        # the helper functions this block calls must actually be present --
+        # catches a rename in claims_runner_helpers.jl that forgets to update
+        # the orchestration block below it
+        for name in ("claude_binary", "claude_jpe_config_dir", "CLAIMS_JSON_SCHEMA",
+                     "claims_extraction_prompt", "build_claude_claims_cmd", "run_claude_claims_extraction")
+            @test occursin(name, content)
+        end
+
+        @test occursin("PackageScanner.extract_latex_text(paper_dest_path)", content)
+        @test occursin("report-claims-extraction.md", content)
+        @test occursin("if true", content)  # do_claims baked in
+    end
+end
+
+@testset "write_runner_script - do_claims=false skips Stage C at runtime" begin
+    mktempdir() do repoloc
+        JPE.write_runner_script(repoloc, ["__MACOSX", "renv"]; run_checks = true, do_claims = false)
+        content = read(joinpath(repoloc, "runner_precheck.jl"), String)
+        parsed = Meta.parseall(content)
+        @test !(parsed isa Expr && parsed.head == :incomplete)
+        @test occursin("if false", content)
+    end
+end
