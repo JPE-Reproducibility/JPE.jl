@@ -446,6 +446,149 @@ function read_replicators()
 
 end
 
+function gs4_get_former_replicators()
+    rcopy(R"""
+    googlesheets4::read_sheet($(gs_replicators_id()), sheet = 'former_replicators')
+    """)
+end
+
+function gs4_append_former_replicators(d::DataFrame)
+    R"""
+    googlesheets4::sheet_append($(gs_replicators_id()), data = $(d), sheet = 'former_replicators')
+    """
+end
+
+"""
+    gs4_delete_confirmed_rows(sheet_rows::Vector{Int})
+
+Deletes the given 1-indexed sheet row numbers (as they appear in the Google
+Sheets UI, header included) from the `confirmed` tab, shifting remaining
+rows up. Unlike rewriting the whole sheet, this preserves formatting, data
+validation (e.g. dropdowns), and conditional formatting on untouched rows
+and columns.
+"""
+function gs4_delete_confirmed_rows(sheet_rows::Vector{Int})
+    for row in sort(sheet_rows, rev = true)
+        rng = "confirmed!$(row):$(row)"
+        R"""
+        googlesheets4::range_delete($(gs_replicators_id()), range = $(rng), shift = "up")
+        """
+    end
+end
+
+"""
+    replicator_start_date(email::AbstractString)
+
+Infers the date a replicator first became active from the local database,
+as the earliest `date_assigned_repl` (iterations, columns `replicator1`/
+`replicator2`) or `timestamp` (reports, columns `email_of_replicator_1`/
+`email_of_replicator_2`) recorded against `email`. Returns `missing` if no
+record is found.
+"""
+function replicator_start_date(email::AbstractString)
+    with_db() do con
+        q = """
+        SELECT MIN(d) AS start_date FROM (
+            SELECT date_assigned_repl AS d FROM iterations WHERE replicator1 = ? OR replicator2 = ?
+            UNION ALL
+            SELECT CAST(timestamp AS DATE) AS d FROM reports WHERE email_of_replicator_1 = ? OR email_of_replicator_2 = ?
+        ) sub
+        WHERE d IS NOT NULL
+        """
+        stmt = DBInterface.prepare(con, q)
+        df = DataFrame(DBInterface.execute(stmt, (email, email, email, email)))
+        nrow(df) == 0 ? missing : df.start_date[1]
+    end
+end
+
+"""
+    retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Dates.today())
+
+Moves replicators identified by `emails` from the active `confirmed` tab of
+the replicators Google Sheet to the `former_replicators` history tab,
+recording their GitHub username, an inferred start date
+([`replicator_start_date`](@ref)), and the given `left` date. Removes the
+corresponding rows from `confirmed`, and removes each replicator's GitHub
+username (where on file) from the `JPE-Reproducibility` GitHub organization
+via [`gh_remove_org_member`](@ref).
+
+Emails already present in `former_replicators`, or not found in `confirmed`,
+are skipped (and reported) rather than erroring out the whole batch.
+Replicators with no GitHub username on file are retired from the sheet but
+skipped for org removal (reported in `no_gh_username`).
+
+Under `JPE_TEST=1`, no sheet writes and no GitHub org removal happen; the
+function only logs what would have been done.
+
+Removing rows from `confirmed` is done via targeted row deletion
+([`gs4_delete_confirmed_rows`](@ref)), not a full-sheet rewrite, so
+formatting, data validation (e.g. dropdowns), and conditional formatting on
+the rest of the sheet are left untouched.
+
+Returns a `NamedTuple` with `retired`, `not_found`, `already_former`
+(email vectors), `gh_removed`, `gh_failed`, and `no_gh_username` (username/
+email vectors).
+"""
+function retire_replicators!(emails::Vector{<:AbstractString}; left::Date = Dates.today(),
+                              auth::Function = gs4_auth,
+                              get_confirmed::Function = gs4_get_replicators,
+                              get_former::Function = gs4_get_former_replicators,
+                              remove_org_member::Function = gh_remove_org_member,
+                              append_former::Function = gs4_append_former_replicators,
+                              delete_confirmed_rows::Function = gs4_delete_confirmed_rows)
+    auth()
+    confirmed = get_confirmed()
+    former = get_former()
+
+    already_former = intersect(emails, former.email)
+    candidates = setdiff(emails, already_former)
+
+    mask = coalesce.(in.(confirmed.email, Ref(candidates)), false)
+    # +1 to account for the header row, so these are 1-indexed Sheets row numbers
+    sheet_rows = findall(mask) .+ 1
+    to_retire = confirmed[mask, :]
+    not_found = setdiff(candidates, to_retire.email)
+
+    gh_removed = String[]
+    gh_failed = String[]
+    no_gh_username = String[]
+
+    if nrow(to_retire) > 0
+        to_retire = copy(to_retire)
+        to_retire.started = replicator_start_date.(to_retire.email)
+        to_retire.left = fill(left, nrow(to_retire))
+        DataFrames.rename!(to_retire, "Name" => "name", "OS" => "os", "github username" => "github_username")
+
+        test_mode = get(ENV, "JPE_TEST", "0") == "1"
+
+        for r in eachrow(to_retire)
+            username = r.github_username
+            if ismissing(username) || isempty(strip(username))
+                push!(no_gh_username, r.email)
+            elseif test_mode
+                @info "JPE_TEST: would remove $username from the GitHub org"
+            elseif remove_org_member(username)
+                push!(gh_removed, username)
+            else
+                push!(gh_failed, username)
+            end
+        end
+
+        if test_mode
+            @info "JPE_TEST: would retire $(to_retire.email) as of $left"
+        else
+            append_former(select(to_retire, :name, :email, :os, :github_username, :started, :left))
+            delete_confirmed_rows(sheet_rows)
+        end
+    end
+
+    return (retired = to_retire.email, not_found = not_found, already_former = already_former,
+            gh_removed = gh_removed, gh_failed = gh_failed, no_gh_username = no_gh_username)
+end
+
+retire_replicator!(email::AbstractString; left::Date = Dates.today()) =
+    retire_replicators!([email]; left = left)
+
 """
 reads the entire google form with reports from replicators
 """

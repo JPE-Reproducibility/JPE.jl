@@ -201,6 +201,17 @@ function gh_silent_run(cmd::Cmd)
     end
 end
 
+"""
+    gh_remove_org_member(username::AbstractString; org::String = "JPE-Reproducibility")
+
+Removes `username` from the GitHub organization `org` via
+`gh api -X DELETE orgs/{org}/members/{username}`. Returns `true` on success,
+`false` otherwise (e.g. the user was already not a member).
+"""
+function gh_remove_org_member(username::AbstractString; org::String = "JPE-Reproducibility")
+    gh_silent_run(`gh api -X DELETE orgs/$org/members/$username`)
+end
+
 
 function force_git_clone(repo_url::String, local_path::String)
     # Remove existing directory if it exists
