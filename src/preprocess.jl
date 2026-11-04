@@ -1,5 +1,6 @@
 
-function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_file_size_gb = 2, run_checks = true)
+function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_file_size_gb = 2, run_checks = true,
+                     run_claims_extraction::Union{Nothing,Bool} = nothing)
         
     # get row from "iterations"
     p = db_filter_paper(paperID)
@@ -49,6 +50,33 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     # code. It's only cleared (below, in the `local` branch) right before a
     # genuine local re-fetch, where it would otherwise let
     # runner_precheck.jl's "already_have_package" check skip that fetch.
+
+    # Stage C claims extraction (JPE-Reproducibility/JPE.jl#29). This is a
+    # JPE.jl-local step (claude CLI / Pro-subscription auth isn't available
+    # on the gh-runner), gated so it never silently re-spends on an unchanged
+    # paper: skip if claims.json is already in this round's cloned repo
+    # (checked by extract_paper_claims itself), else default on for round 1,
+    # else ask. An explicit run_claims_extraction=true/false always wins.
+    claims_out_dir = joinpath(repoloc, "generated")
+    claims_cached = isfile(joinpath(claims_out_dir, "claims.json"))
+    do_claims = if !isnothing(run_claims_extraction)
+        run_claims_extraction
+    elseif claims_cached
+        false
+    elseif round == 1
+        true
+    else
+        println(">>> Run paper claims crosscheck (Stage C) for $paperID round $round?")
+        request(RadioMenu(["Yes", "No"])) == 1
+    end
+
+    if do_claims
+        try
+            extract_paper_claims(paperID; round = round, out_dir = claims_out_dir)
+        catch e
+            @warn "claims extraction failed for $paperID round $round: $e"
+        end
+    end
 
     # check size of replication packge on dropbox and decide what to do
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = false)

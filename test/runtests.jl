@@ -37,4 +37,5 @@ end
     include("test_google.jl")
     include("test_actions.jl")
     include("test_zip.jl")
+    include("test_claims_extraction.jl")
 end
