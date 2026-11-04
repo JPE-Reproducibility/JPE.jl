@@ -332,6 +332,61 @@ function sync_template_files!(repoloc::String)
             @warn "Could not sync $relpath from JPEtemplate main — leaving existing version in place" exception=e
         end
     end
+    sync_gitignore!(repoloc)
+end
+
+"""
+    sync_gitignore!(repoloc::String)
+
+Merge any `.gitignore` rules from `JPE-Reproducibility/JPEtemplate` main that
+this repo's `.gitignore` doesn't already have, appending the missing lines
+rather than overwriting the file outright (a paper repo could in principle
+have its own legitimate additions). This is what back-fills new exclusion
+rules -- e.g. `paper-source/**`, added after some paper repos were already
+created from an older template -- into already-existing repos, which
+`sync_template_files!`'s other two files don't need (they're always fully
+regenerated, never hand-edited per-repo).
+
+Best-effort, same reasoning as `sync_template_files!`: a fetch failure is
+warned and skipped rather than aborting preprocessing.
+"""
+function sync_gitignore!(repoloc::String)
+    try
+        upstream = read(`gh api -H "Accept: application/vnd.github.raw" repos/JPE-Reproducibility/JPEtemplate/contents/.gitignore`, String)
+        destpath = joinpath(repoloc, ".gitignore")
+        existing_lines = isfile(destpath) ? Set(readlines(destpath)) : Set{String}()
+        missing = [line for line in split(upstream, '\n') if !isempty(strip(line)) && !(line in existing_lines)]
+        if !isempty(missing)
+            open(destpath, "a") do io
+                println(io, "")
+                println(io, "# synced from JPEtemplate main (sync_gitignore!)")
+                for line in missing
+                    println(io, line)
+                end
+            end
+            @info "✓ Appended $(length(missing)) missing .gitignore rule(s) from JPEtemplate main"
+
+            # A new ignore rule only stops *future* untracked files from being
+            # added -- it does nothing for paths some earlier round already
+            # committed before this rule existed (exactly what happened to
+            # paper-source/ on repos created before JPE-Reproducibility/JPE.jl#34
+            # added that rule upstream). Untrack any newly-ignored directory
+            # pattern that's already tracked, so the next commit actually
+            # drops it instead of silently keeping it staged forever.
+            for line in missing
+                dirname_match = match(r"^([^#!*][^/]*)/\*{0,2}$", line)
+                isnothing(dirname_match) && continue
+                dir = dirname_match.captures[1]
+                try
+                    run(Cmd(`git rm -r --cached --ignore-unmatch -q $dir`, dir = repoloc))
+                catch e
+                    @warn "Could not untrack $dir after gitignore sync" exception=e
+                end
+            end
+        end
+    catch e
+        @warn "Could not sync .gitignore from JPEtemplate main — leaving existing version in place" exception=e
+    end
 end
 
 """
