@@ -55,6 +55,7 @@ include("zip.jl")
 include("reporting.jl")
 include("db_backups.jl")
 include("dataverse.jl")
+include("claims_extraction.jl")
 include("preprocess.jl")
 
 
