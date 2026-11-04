@@ -571,6 +571,13 @@ function db_filter_status(status1::String,status2::String)
     end
 end
 
+function db_filter_status_duration(x::Integer = 100)
+    with_db() do con
+        df = DBInterface.execute(con, "SELECT * FROM papers WHERE status = ?", ("with_author",)) |> DataFrame
+        filter(row -> !ismissing(row.date_with_authors) && Dates.value(Dates.today() - row.date_with_authors) > x, df)
+    end
+end
+
 function db_filter_paper(id)
     with_db() do con
         DBInterface.execute(con, "SELECT * FROM papers WHERE paper_id = ?", (id,)) |> DataFrame
@@ -637,10 +644,13 @@ function db_get_table_schema(table::String)
             "file_request_path" => Dict(:type => "VARCHAR", :constraints => ""),
             "repl_package_path" => Dict(:type => "VARCHAR", :constraints => ""),
             "paper_path" => Dict(:type => "VARCHAR", :constraints => ""),
+            "paper_source_path" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_path_full" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_url_pkg" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_id_paper" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_url_paper" => Dict(:type => "VARCHAR", :constraints => ""),
+            "file_request_id_paper_source" => Dict(:type => "VARCHAR", :constraints => ""),
+            "file_request_url_paper_source" => Dict(:type => "VARCHAR", :constraints => ""),
             "date_with_authors" => Dict(:type => "DATE", :constraints => ""),
             "date_published" => Dict(:type => "DATE", :constraints => ""),
             "is_remote" => Dict(:type => "BOOLEAN", :constraints => ""),
@@ -697,11 +707,14 @@ function db_get_table_schema(table::String)
             "file_request_path" => Dict(:type => "VARCHAR", :constraints => ""),
             "repl_package_path" => Dict(:type => "VARCHAR", :constraints => ""),
             "paper_path" => Dict(:type => "VARCHAR", :constraints => ""),
+            "paper_source_path" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_path_full" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_id_pkg" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_id_paper" => Dict(:type => "VARCHAR", :constraints => ""),
+            "file_request_id_paper_source" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_url_pkg" => Dict(:type => "VARCHAR", :constraints => ""),
             "file_request_url_paper" => Dict(:type => "VARCHAR", :constraints => ""),
+            "file_request_url_paper_source" => Dict(:type => "VARCHAR", :constraints => ""),
             "github_url" => Dict(:type => "VARCHAR", :constraints => ""),
             "gh_org_repo" => Dict(:type => "VARCHAR", :constraints => ""),
             "dropbox_password" => Dict(:type => "VARCHAR", :constraints => ""),

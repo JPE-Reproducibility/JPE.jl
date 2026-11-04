@@ -159,28 +159,34 @@ function setup_dropbox_structure!(r::DataFrameRow, dbox_token)
     r.file_request_path_full = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
     r.repl_package_path = joinpath(r.file_request_path,"replication-package")
     r.paper_path = joinpath(r.file_request_path,"paper-appendices")
+    r.paper_source_path = joinpath(r.file_request_path,"paper-author")
 
     # Create directories
     mr = string(ENV["JPE_DBOX_APPS"], r.repl_package_path)
     mp = string(ENV["JPE_DBOX_APPS"], r.paper_path)
+    ms = string(ENV["JPE_DBOX_APPS"], r.paper_source_path)
     mkpath(mr)
     mkpath(mp)
-    
+    mkpath(ms)
+
     # Create file requests if needed
     @debug "fr exists?" dbox_fr_exists(dbox_token,r.repl_package_path)
-    @debug "old frs" r.file_request_id_pkg r.file_request_url_pkg r.file_request_id_paper r.file_request_url_paper
+    @debug "old frs" r.file_request_id_pkg r.file_request_url_pkg r.file_request_id_paper r.file_request_url_paper r.file_request_id_paper_source r.file_request_url_paper_source
     # if !dbox_fr_exists(dbox_token,r.repl_package_path)
-        fr_pkg   = dbox_create_file_request(r.repl_package_path, "$(cid) package upload", dbox_token)
-        fr_paper = dbox_create_file_request(r.paper_path, "$(cid) paper upload", dbox_token)
+        fr_pkg          = dbox_create_file_request(r.repl_package_path, "$(cid) package upload", dbox_token)
+        fr_paper        = dbox_create_file_request(r.paper_path, "$(cid) paper upload", dbox_token)
+        fr_paper_source = dbox_create_file_request(r.paper_source_path, "$(cid) paper source (tex/pdf) upload", dbox_token)
         r.file_request_id_pkg = fr_pkg["id"]
         r.file_request_id_paper = fr_paper["id"]
+        r.file_request_id_paper_source = fr_paper_source["id"]
         r.file_request_url_pkg = fr_pkg["url"]
         r.file_request_url_paper = fr_paper["url"]
+        r.file_request_url_paper_source = fr_paper_source["url"]
     # else
     #     @warn "file request exists at $(r.repl_package_path)"
     # end
-    
-    @debug "new frs" r.file_request_id_pkg r.file_request_url_pkg r.file_request_id_paper r.file_request_url_paper
+
+    @debug "new frs" r.file_request_id_pkg r.file_request_url_pkg r.file_request_id_paper r.file_request_url_paper r.file_request_id_paper_source r.file_request_url_paper_source
 end
 
 """
@@ -252,7 +258,7 @@ function google_arrivals()
         println("notify author and JO for $(r.paper_slug)?")
         yes_no_menu = RadioMenu(["Yes","No"])  # Default is first option 
         if request(yes_no_menu) == 1
-            gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author), email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author), paper_url = r.file_request_url_paper)
+            gmail_file_request(r.firstname_of_author, r.paper_id, r.title, r.file_request_url_pkg, author_email(r.email_of_author), email2 = ismissing(r.email_of_second_author) ? nothing : author_email(r.email_of_second_author), paper_url = r.file_request_url_paper_source)
 
             r.date_with_authors = Dates.today()
 
@@ -668,10 +674,13 @@ function prepare_arrivals_for_db(df0::DataFrame)
     df.file_request_path = Array{Union{Missing, String}}(missing, nrow(df))
     df.repl_package_path = Array{Union{Missing, String}}(missing, nrow(df))
     df.paper_path = Array{Union{Missing, String}}(missing, nrow(df))
+    df.paper_source_path = Array{Union{Missing, String}}(missing, nrow(df))
     df.file_request_path_full = Array{Union{Missing, String}}(missing, nrow(df))
     df.file_request_url_pkg = Array{Union{Missing, String}}(missing, nrow(df))
     df.file_request_id_paper = Array{Union{Missing, String}}(missing, nrow(df))
     df.file_request_url_paper = Array{Union{Missing, String}}(missing, nrow(df))
+    df.file_request_id_paper_source = Array{Union{Missing, String}}(missing, nrow(df))
+    df.file_request_url_paper_source = Array{Union{Missing, String}}(missing, nrow(df))
 
     df.date_with_authors = Array{Union{Missing, Date}}(missing, nrow(df))
     df.is_remote         = Array{Union{Missing, Bool}}(missing, nrow(df))
