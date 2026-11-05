@@ -183,6 +183,43 @@ function refine_build_digest(review::Dict)
 end
 
 """
+    refine_build_report(review::Dict)
+
+Render a completed review's full overall feedback and every comment
+(sorted by severity) as markdown, for upload to Dropbox -- the DB digest
+is just a glance, this is the thing to actually read.
+"""
+function refine_build_report(review::Dict)
+    comments = review["feedback"]["detailed"]["comments"]
+    overall = get(get(review["feedback"], "overall", Dict()), "content", "")
+    sev_rank = Dict("critical" => 1, "major" => 2, "minor" => 3, "suggestion" => 4)
+    sorted_comments = sort(comments, by = c -> get(sev_rank, get(c, "severity", "unknown"), 99))
+
+    io = IOBuffer()
+    println(io, "# Referee Review (refine.ink)")
+    println(io)
+    println(io, "- review_id: `$(get(review, "review_id", "?"))`")
+    println(io, "- completed_at: $(get(review, "completed_at", "?"))")
+    println(io, "- comments: $(length(comments))")
+    println(io)
+    println(io, "## Overall feedback")
+    println(io)
+    println(io, overall)
+    for c in sorted_comments
+        println(io)
+        println(io, "## [$(uppercase(get(c, "severity", "unknown")))] $(get(c, "title", ""))")
+        q = get(c, "quote", "")
+        if !isempty(q)
+            println(io)
+            println(io, "> $q")
+        end
+        println(io)
+        println(io, get(c, "message", ""))
+    end
+    return String(take!(io))
+end
+
+"""
     request_referee_review(paperID, round)
 
 Upload the paper's PDF (from `paper-author/`, else `paper-appendices/`) to
@@ -216,9 +253,14 @@ end
     check_referee_reviews()
 
 Poll refine.ink for every iteration row currently `refine_status ==
-"processing"`, and for any that have completed, write a short digest and
-flip status to `"done"`. Mirrors `monitor_file_requests()`'s shape: best-effort
-per row, a failure on one paper doesn't stop the rest.
+"processing"`. For any that have completed: write a short digest, flip
+status to `"done"`, and upload the full report to the paper's Dropbox
+`large-reports/refine-referee-report.md` -- the same permanent, no-expiry
+per-round Dropbox folder `preprocess()` already uses for oversized Stage
+A-D reports (chosen over committing to the paper's git repo: no clone/push
+round-trip, and this is DE-only anyway, same as those). Mirrors
+`monitor_file_requests()`'s shape: best-effort per row, a failure on one
+paper doesn't stop the rest.
 """
 function check_referee_reviews()
     i = subset(db_df("iterations"), :refine_status => ByRow(x -> !ismissing(x) && x == "processing"))
@@ -231,6 +273,15 @@ function check_referee_reviews()
                 digest = refine_build_digest(review)
                 db_update_cell("iterations", cond, "refine_digest", digest)
                 db_update_cell("iterations", cond, "refine_status", "done")
+
+                report_path = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "large-reports", "refine-referee-report.md")
+                try
+                    dbox_upload_text(report_path, refine_build_report(review), dbox_token)
+                    @info "✓ full referee report uploaded to Dropbox at $report_path"
+                catch e
+                    @warn "Could not upload referee report to Dropbox for $(r.paper_id) round $(r.round)" exception=e
+                end
+
                 @info "✓ referee review done for $(r.paper_id) round $(r.round): $digest"
             else
                 @info "$(r.paper_id) round $(r.round): still processing ($(get(review, "progress_percentage", "?"))%)"
