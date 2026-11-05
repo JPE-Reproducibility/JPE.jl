@@ -79,6 +79,8 @@ end
         @test occursin("--effort", cmd_str)
         @test occursin("medium", cmd_str)
         @test occursin("CLAUDE_CONFIG_DIR=/custom/claude-config", cmd_str)
+        @test occursin("--add-dir", cmd_str)
+        @test occursin("/tmp", cmd_str)
     end
 end
 
@@ -127,6 +129,37 @@ end
         content = read(joinpath(repoloc, "runner_precheck.jl"), String)
         parsed = Meta.parseall(content)
         @test !(parsed isa Expr && parsed.head == :incomplete)
+        @test occursin("if false", content)
+    end
+end
+
+@testset "write_runner_script - Stage D splice parses and wires in the helpers" begin
+    mktempdir() do repoloc
+        JPE.write_runner_script(repoloc, ["__MACOSX", "renv"]; run_checks = true, do_claims = true, do_crosscheck = true)
+        content = read(joinpath(repoloc, "runner_precheck.jl"), String)
+
+        parsed = Meta.parseall(content)
+        @test !(parsed isa Expr && parsed.head == :incomplete)
+
+        for name in ("CROSSCHECK_JSON_SCHEMA", "crosscheck_prompt", "build_crosscheck_cmd",
+                     "run_claude_crosscheck", "compute_coverage", "render_crosscheck_report",
+                     "read_or_placeholder")
+            @test occursin(name, content)
+        end
+
+        @test occursin("report-crosscheck.md", content)
+        @test occursin("crosscheck.json", content)
+    end
+end
+
+@testset "write_runner_script - do_crosscheck=false (default) skips Stage D at runtime" begin
+    mktempdir() do repoloc
+        JPE.write_runner_script(repoloc, ["__MACOSX", "renv"]; run_checks = true, do_claims = true)
+        content = read(joinpath(repoloc, "runner_precheck.jl"), String)
+        parsed = Meta.parseall(content)
+        @test !(parsed isa Expr && parsed.head == :incomplete)
+        # Stage D helpers are always spliced in (harmless if unused), but the
+        # orchestration block itself must be gated off by default.
         @test occursin("if false", content)
     end
 end

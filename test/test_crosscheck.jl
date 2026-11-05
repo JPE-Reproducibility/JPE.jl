@@ -82,5 +82,7 @@ end
         @test occursin("Read", cmd_str)
         @test occursin("--json-schema", cmd_str)
         @test occursin("CLAUDE_CONFIG_DIR=/custom/claude-config", cmd_str)
+        @test occursin("--add-dir", cmd_str)
+        @test occursin("/tmp/bundle", cmd_str)
     end
 end
