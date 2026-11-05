@@ -175,9 +175,10 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     isnothing(large_reports_url) && error("dbox_link_at_path returned nothing for $large_reports_path — check Dropbox credentials and path")
 
     # Create _variables.yml with all necessary info for the runner
+    yaml_escape(s) = replace(string(s), "\"" => "\\\"")
     open(joinpath(repoloc, "_variables.yml"), "w") do io
-        println(io, "title: \"$(r.title)\"")
-        println(io, "author: \"$(r.surname_of_author)\"")
+        println(io, "title: \"$(yaml_escape(r.title))\"")
+        println(io, "author: \"$(yaml_escape(r.surname_of_author))\"")
         println(io, "round: $(round)")
         println(io, "repo: \"$(r.github_url)\"")
         println(io, "paper_id: $(r.paper_id)")

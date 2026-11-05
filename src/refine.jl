@@ -9,6 +9,12 @@
 # up completed reviews and write a short digest, surfaced via ps().
 
 const REFINE_BASE_URL = "https://api.refine.ink"
+# The JPE refine.ink credits live on the "Journal of Political Economy" org,
+# not the personal account behind JPE_REFINE (which has 0 paid credits) --
+# every call must carry this header/query param or the API 403s with
+# "no-credits" even though the org has a balance. Overridable via
+# JPE_REFINE_ORG in case the org id ever changes or a different account is used.
+const REFINE_ORGANIZATION = get(ENV, "JPE_REFINE_ORG", "org_36u32nIIdbgzrtFRjD4HVy64a5B")
 
 function refine_token()
     token = get(ENV, "JPE_REFINE", nothing)
@@ -17,23 +23,53 @@ function refine_token()
 end
 
 """
-    find_paper_pdf(author_dir::String, appendices_dir::String)
+    find_pdf_in_dir(dir::String)
 
-Pick which local Dropbox folder to search for the paper's PDF: prefer
-`paper-author/` if it contains any `.pdf`, else fall back to
-`paper-appendices/`. Returns the full path to the first `.pdf` found, or
-`nothing` if neither folder has one.
+Look for a `.pdf` directly under `dir`. If none is found, fall back to
+unzipping any `.zip` archive under `dir` (authors sometimes bundle the paper
+PDF inside a zip, e.g. alongside appendices) into a temp dir and searching
+that instead. Returns the full path to the first `.pdf` found, or `nothing`.
 """
-function find_paper_pdf(author_dir::String, appendices_dir::String)
-    has_pdf(dir) = isdir(dir) && any(endswith(lowercase(f), ".pdf") for (_, _, files) in walkdir(dir) for f in files)
-    dir = has_pdf(author_dir) ? author_dir : (has_pdf(appendices_dir) ? appendices_dir : nothing)
-    isnothing(dir) && return nothing
+function find_pdf_in_dir(dir::String)
+    isdir(dir) || return nothing
     for (root, _, files) in walkdir(dir)
         for f in files
             endswith(lowercase(f), ".pdf") && return joinpath(root, f)
         end
     end
+    for (root, _, files) in walkdir(dir)
+        for f in files
+            endswith(lowercase(f), ".zip") || continue
+            zip_path = joinpath(root, f)
+            tmp = mktempdir()
+            try
+                run(`unzip -oq $zip_path -d $tmp`)
+            catch e
+                @warn "could not unzip $zip_path while searching for paper PDF" exception=e
+                continue
+            end
+            for (r2, _, files2) in walkdir(tmp)
+                for f2 in files2
+                    endswith(lowercase(f2), ".pdf") && return joinpath(r2, f2)
+                end
+            end
+        end
+    end
     return nothing
+end
+
+"""
+    find_paper_pdf(author_dir::String, appendices_dir::String)
+
+Pick which local Dropbox folder to search for the paper's PDF: prefer
+`paper-author/`, else fall back to `paper-appendices/`. Within each folder,
+checks bare `.pdf` files first, then `.pdf`s inside any `.zip` archive (see
+`find_pdf_in_dir`). Returns `nothing` if neither folder yields one.
+"""
+function find_paper_pdf(author_dir::String, appendices_dir::String)
+    pdf = find_pdf_in_dir(author_dir)
+    isnothing(pdf) || return pdf
+    return find_pdf_in_dir(appendices_dir)
 end
 
 """
@@ -46,20 +82,29 @@ ends without either.
 function refine_read_sse(url::String)
     result = nothing
     HTTP.open(:GET, url) do stream
+        # Read in chunks via readavailable/eof rather than eachline(stream) --
+        # HTTP.Stream has no internal buffering, so eachline reads one byte at
+        # a time and warns about it (HTTP.Streams.jl#246).
+        leftover = ""
         data_buf = ""
-        for line in eachline(stream)
-            if isempty(line)
-                isempty(data_buf) && continue
-                evt = JSON.parse(data_buf)
-                data_buf = ""
-                if evt["type"] == "complete"
-                    result = evt["result"]
-                    break
-                elseif evt["type"] == "error"
-                    error("refine.ink SSE error: $(get(evt, "error", evt))")
+        while !eof(stream)
+            leftover *= String(readavailable(stream))
+            while (nl = findfirst('\n', leftover)) !== nothing
+                line = rstrip(leftover[1:nl-1], '\r')
+                leftover = leftover[nl+1:end]
+                if isempty(line)
+                    isempty(data_buf) && continue
+                    evt = JSON.parse(data_buf)
+                    data_buf = ""
+                    if evt["type"] == "complete"
+                        result = evt["result"]
+                        return
+                    elseif evt["type"] == "error"
+                        error("refine.ink SSE error: $(get(evt, "error", evt))")
+                    end
+                elseif startswith(line, "data:")
+                    data_buf *= strip(line[6:end])
                 end
-            elseif startswith(line, "data:")
-                data_buf *= strip(line[6:end])
             end
         end
     end
@@ -78,10 +123,12 @@ function refine_upload_document(filepath::String)
     token = refine_token()
 
     form = HTTP.Form(Dict("file" => HTTP.Multipart(basename(filepath), open(filepath), "application/pdf")))
-    resp = HTTP.post("$REFINE_BASE_URL/documents/upload", ["Authorization" => "Bearer $token"], form)
+    resp = HTTP.post("$REFINE_BASE_URL/documents/upload",
+                      ["Authorization" => "Bearer $token", "X-Refine-Organization" => REFINE_ORGANIZATION],
+                      form)
     data = JSON.parse(String(resp.body))
 
-    events_url = "$REFINE_BASE_URL/documents/upload/events/$(data["task_id"])?token=$token&organization=personal"
+    events_url = "$REFINE_BASE_URL/documents/upload/events/$(data["task_id"])?token=$token&organization=$REFINE_ORGANIZATION"
     result = refine_read_sse(events_url)
     return result["document_id"]
 end
@@ -96,7 +143,8 @@ take 5-20+ min) -- see `check_referee_reviews()`.
 function refine_start_processing(document_id::String)
     token = refine_token()
     resp = HTTP.post("$REFINE_BASE_URL/documents/$document_id/process",
-                      ["Authorization" => "Bearer $token", "Content-Type" => "application/json"],
+                      ["Authorization" => "Bearer $token", "Content-Type" => "application/json",
+                       "X-Refine-Organization" => REFINE_ORGANIZATION],
                       JSON.json(Dict("preview" => false)))
     data = JSON.parse(String(resp.body))
     return data["review_id"]
@@ -109,7 +157,8 @@ Fetch the current state of a review (still-processing or completed).
 """
 function refine_get_review(review_id::String)
     token = refine_token()
-    resp = HTTP.get("$REFINE_BASE_URL/reviews/$review_id", ["Authorization" => "Bearer $token"])
+    resp = HTTP.get("$REFINE_BASE_URL/reviews/$review_id",
+                     ["Authorization" => "Bearer $token", "X-Refine-Organization" => REFINE_ORGANIZATION])
     return JSON.parse(String(resp.body))
 end
 
