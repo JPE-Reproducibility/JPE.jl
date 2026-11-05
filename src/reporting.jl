@@ -964,7 +964,7 @@ function ps()
     for r in eachrow(p)
         push!(x, (r.paper_id, calculate_days_in_status(r)))
     end
-    it = select(db_df("iterations"), :paper_id, :round, :replicator1 => :replicator_email)
+    it = select(db_df("iterations"), :paper_id, :round, :replicator1 => :replicator_email, :refine_status)
     it_prev = select(db_df("iterations"), :paper_id, :round => (r -> r .+ 1) => :round, :replicator1 => :replicator_email_prev)
     df = @chain p begin
         subset(:comments => ByRow(x -> (ismissing(x) | (x !=("[TEST]")))))
@@ -975,7 +975,7 @@ function ps()
         leftjoin(it, on = [:paper_id, :round])
         leftjoin(it_prev, on = [:paper_id, :round])
         transform([:status, :replicator_email, :replicator_email_prev] => ByRow((s, e, ep) -> (ismissing(e) && s == "with_author") ? ep : e) => :replicator_email)
-        select(:status, :paper_slug, :round, :days_in_status, :is_confidential, :replicator_email)
+        select(:status, :paper_slug, :round, :days_in_status, :is_confidential, :replicator_email, :refine_status)
         # sort( :days_in_status, rev = true)
     end
     sort!(df, [:status, :days_in_status], rev = [false,true])

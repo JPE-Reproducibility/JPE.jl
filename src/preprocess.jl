@@ -111,8 +111,24 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
         no_data_scan = ["__MACOSX","renv"]
     end
 
+    # Automated referee review (refine.ink). Deliberately decoupled from the
+    # rest of preprocess(): it's a slow (5-20+ min) external call that's
+    # checked back on later via check_referee_reviews(), not something the
+    # local/gh-runner branches below wait on -- so a failure here is a
+    # warning, not a reason to abort preprocessing.
+    println()
+    println(">>> Request automated referee review via refine.ink for $paperID round $round?")
+    refine_prompt = RadioMenu(["Yes","No"])
+    if request(refine_prompt) == 1
+        try
+            request_referee_review(paperID, round)
+            @info "⏳ remember to run check_referee_reviews() later (e.g. once a day, alongside monitor_file_requests()) to pick up the result"
+        catch e
+            @warn "Could not request referee review from refine.ink" exception=e
+        end
+    end
 
-    
+
     # Create a public Dropbox shared link for the runner (and replicators) to
     # download the replication package via plain curl — no credentials needed.
     #

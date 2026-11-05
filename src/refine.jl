@@ -1,0 +1,193 @@
+
+# Automated referee review via refine.ink (https://api.refine.ink/docs).
+#
+# Deliberately NOT folded into preprocess()'s runner_precheck.jl like Stage
+# C/D: this call is slow (5-20+ min to process) and external, so it's kept as
+# its own fire-and-forget step -- request_referee_review() uploads the PDF
+# and starts processing, then returns immediately; check_referee_reviews()
+# (mirroring monitor_file_requests() in actions.jl) is called later to pick
+# up completed reviews and write a short digest, surfaced via ps().
+
+const REFINE_BASE_URL = "https://api.refine.ink"
+
+function refine_token()
+    token = get(ENV, "JPE_REFINE", nothing)
+    isnothing(token) && error("JPE_REFINE environment variable not set")
+    return token
+end
+
+"""
+    find_paper_pdf(author_dir::String, appendices_dir::String)
+
+Pick which local Dropbox folder to search for the paper's PDF: prefer
+`paper-author/` if it contains any `.pdf`, else fall back to
+`paper-appendices/`. Returns the full path to the first `.pdf` found, or
+`nothing` if neither folder has one.
+"""
+function find_paper_pdf(author_dir::String, appendices_dir::String)
+    has_pdf(dir) = isdir(dir) && any(endswith(lowercase(f), ".pdf") for (_, _, files) in walkdir(dir) for f in files)
+    dir = has_pdf(author_dir) ? author_dir : (has_pdf(appendices_dir) ? appendices_dir : nothing)
+    isnothing(dir) && return nothing
+    for (root, _, files) in walkdir(dir)
+        for f in files
+            endswith(lowercase(f), ".pdf") && return joinpath(root, f)
+        end
+    end
+    return nothing
+end
+
+"""
+    refine_read_sse(url::String)
+
+Read a refine.ink SSE progress stream and return the `result` payload of its
+terminal `complete` event. Errors out on an `error` event or a stream that
+ends without either.
+"""
+function refine_read_sse(url::String)
+    result = nothing
+    HTTP.open(:GET, url) do stream
+        data_buf = ""
+        for line in eachline(stream)
+            if isempty(line)
+                isempty(data_buf) && continue
+                evt = JSON.parse(data_buf)
+                data_buf = ""
+                if evt["type"] == "complete"
+                    result = evt["result"]
+                    break
+                elseif evt["type"] == "error"
+                    error("refine.ink SSE error: $(get(evt, "error", evt))")
+                end
+            elseif startswith(line, "data:")
+                data_buf *= strip(line[6:end])
+            end
+        end
+    end
+    isnothing(result) && error("refine.ink SSE stream at $url ended without a complete event")
+    return result
+end
+
+"""
+    refine_upload_document(filepath::String)
+
+Upload a PDF to refine.ink and wait (via SSE) for conversion to finish.
+Returns the resulting `document_id`.
+"""
+function refine_upload_document(filepath::String)
+    isfile(filepath) || error("file not found: $filepath")
+    token = refine_token()
+
+    form = HTTP.Form(Dict("file" => HTTP.Multipart(basename(filepath), open(filepath), "application/pdf")))
+    resp = HTTP.post("$REFINE_BASE_URL/documents/upload", ["Authorization" => "Bearer $token"], form)
+    data = JSON.parse(String(resp.body))
+
+    events_url = "$REFINE_BASE_URL/documents/upload/events/$(data["task_id"])?token=$token&organization=personal"
+    result = refine_read_sse(events_url)
+    return result["document_id"]
+end
+
+"""
+    refine_start_processing(document_id::String)
+
+Start full proofreading (1 paid credit) for an already-uploaded document.
+Returns the `review_id`; does NOT wait for the review to finish (that can
+take 5-20+ min) -- see `check_referee_reviews()`.
+"""
+function refine_start_processing(document_id::String)
+    token = refine_token()
+    resp = HTTP.post("$REFINE_BASE_URL/documents/$document_id/process",
+                      ["Authorization" => "Bearer $token", "Content-Type" => "application/json"],
+                      JSON.json(Dict("preview" => false)))
+    data = JSON.parse(String(resp.body))
+    return data["review_id"]
+end
+
+"""
+    refine_get_review(review_id::String)
+
+Fetch the current state of a review (still-processing or completed).
+"""
+function refine_get_review(review_id::String)
+    token = refine_token()
+    resp = HTTP.get("$REFINE_BASE_URL/reviews/$review_id", ["Authorization" => "Bearer $token"])
+    return JSON.parse(String(resp.body))
+end
+
+"""
+    refine_build_digest(review::Dict)
+
+Collapse a completed review into a one-line digest (comment count by
+severity + the overall-feedback blurb) -- the full review stays on
+refine.ink, this is just enough to glance at in `ps()`.
+"""
+function refine_build_digest(review::Dict)
+    comments = review["feedback"]["detailed"]["comments"]
+    by_sev = Dict{String,Int}()
+    for c in comments
+        sev = get(c, "severity", "unknown")
+        by_sev[sev] = get(by_sev, sev, 0) + 1
+    end
+    sev_str = join(("$k:$v" for (k, v) in sort(collect(by_sev))), ", ")
+    overall = get(get(review["feedback"], "overall", Dict()), "content", "")
+    overall_short = length(overall) > 200 ? overall[1:200] * "…" : overall
+    return "$(length(comments)) comment(s) [$sev_str] — $overall_short"
+end
+
+"""
+    request_referee_review(paperID, round)
+
+Upload the paper's PDF (from `paper-author/`, else `paper-appendices/`) to
+refine.ink and kick off proofreading. Stores `refine_document_id`,
+`refine_review_id`, and `refine_status = "processing"` on the iteration row
+and returns immediately -- call `check_referee_reviews()` later to pick up
+the result.
+"""
+function request_referee_review(paperID, round)
+    rt = db_filter_iteration(paperID, round)
+    nrow(rt) == 1 || error("can only get a single row here")
+    r = rt[1, :]
+
+    base_dir = get_dbox_loc(r.journal, r.paper_slug, round, full = true)
+    pdf_path = find_paper_pdf(joinpath(base_dir, "paper-author"), joinpath(base_dir, "paper-appendices"))
+    isnothing(pdf_path) && error("no PDF found under paper-author/ or paper-appendices/ for $paperID round $round")
+
+    @info "uploading $pdf_path to refine.ink for referee review"
+    document_id = refine_upload_document(pdf_path)
+    review_id = refine_start_processing(document_id)
+
+    cond = "paper_id = '$paperID' AND round = $round"
+    db_update_cell("iterations", cond, "refine_document_id", document_id)
+    db_update_cell("iterations", cond, "refine_review_id", review_id)
+    db_update_cell("iterations", cond, "refine_status", "processing")
+    @info "✓ referee review requested for $paperID round $round (review_id=$review_id) — check back with check_referee_reviews()"
+    return review_id
+end
+
+"""
+    check_referee_reviews()
+
+Poll refine.ink for every iteration row currently `refine_status ==
+"processing"`, and for any that have completed, write a short digest and
+flip status to `"done"`. Mirrors `monitor_file_requests()`'s shape: best-effort
+per row, a failure on one paper doesn't stop the rest.
+"""
+function check_referee_reviews()
+    i = subset(db_df("iterations"), :refine_status => ByRow(x -> !ismissing(x) && x == "processing"))
+
+    for r in eachrow(i)
+        try
+            review = refine_get_review(r.refine_review_id)
+            cond = "paper_id = '$(r.paper_id)' AND round = $(r.round)"
+            if review["processing_status"] == "completed"
+                digest = refine_build_digest(review)
+                db_update_cell("iterations", cond, "refine_digest", digest)
+                db_update_cell("iterations", cond, "refine_status", "done")
+                @info "✓ referee review done for $(r.paper_id) round $(r.round): $digest"
+            else
+                @info "$(r.paper_id) round $(r.round): still processing ($(get(review, "progress_percentage", "?"))%)"
+            end
+        catch e
+            @warn "Error checking refine review for $(r.paper_id) round $(r.round): $e"
+        end
+    end
+end
