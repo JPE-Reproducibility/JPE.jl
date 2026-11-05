@@ -117,14 +117,27 @@ Uses `--safe-mode` (not `--bare`, which strictly requires `ANTHROPIC_API_KEY`
 and would break the Pro-subscription OAuth auth this relies on) to drop
 CLAUDE.md/memory/hooks overhead, and restricts tools to `Read` only --
 a single turn, no agentic loop, to keep this cheap under a Pro quota.
+
+Uses `addenv` (not `setenv`, which replaces the *entire* child environment
+with just the pairs given) so the override merges with the inherited
+environment -- `claude` still needs `HOME`/`PATH` etc. to find its
+credentials, or it fails immediately with "Not logged in".
+
+Passes `--add-dir` for the directory containing `paper_text_path` to
+explicitly grant `Read` access to it. This call happens to work without it
+today (the prompt states the full absolute path verbatim, which `--safe-mode`
+appears to auto-approve), but Stage D's identical setup silently returned
+empty results once its prompt stopped doing that (see `build_crosscheck_cmd`)
+-- `--add-dir` makes the grant explicit instead of relying on that heuristic.
 """
 function build_claude_claims_cmd(paper_text_path::String; effort::String = "medium")
     bin = claude_binary()
     isnothing(bin) && error("claude CLI not found on PATH")
 
-    setenv(
+    addenv(
         `$bin -p $(claims_extraction_prompt(paper_text_path))
          --output-format json --tools Read --safe-mode --effort $effort
+         --add-dir $(dirname(paper_text_path))
          --json-schema $CLAIMS_JSON_SCHEMA`,
         "CLAUDE_CONFIG_DIR" => claude_jpe_config_dir(),
     )

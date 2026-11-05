@@ -1,6 +1,6 @@
 
 function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_file_size_gb = 2, run_checks = true,
-                     run_claims_extraction::Union{Nothing,Bool} = nothing)
+                     run_claims_extraction::Union{Nothing,Bool} = nothing, run_crosscheck::Bool = true)
         
     # get row from "iterations"
     p = db_filter_paper(paperID)
@@ -187,7 +187,8 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     sync_template_files!(repoloc)
 
     # Create runner script
-    write_runner_script(repoloc, no_data_scan, run_checks = run_checks, do_claims = do_claims)
+    write_runner_script(repoloc, no_data_scan, run_checks = run_checks, do_claims = do_claims,
+                         do_crosscheck = run_crosscheck && round == 1)
 
     # git branches
     branch = gh_get_default_branch(r.gh_org_repo)
@@ -406,12 +407,24 @@ generated/report-claims-extraction.md explaining why" (no interactive
 disambiguation is possible in an unattended script -- same reasoning as the
 rest of this unattended run).
 
+If `do_crosscheck` is true, the script also runs Stage D crosscheck
+(JPE-Reproducibility/JPE.jl#38) right after Stage A/C, matching claims.json
+against Stage A/B's findings. Folded into this same script (rather than a
+separate DE-triggered call) so it lands on disk before either runner commits
+its results -- `git add .` (here for local mode, or precheck.yml's "Commit
+and push results" step for gh-runner mode) picks it up automatically,
+matching how Stage C's claims.json already gets committed. Requires
+claims.json to exist (i.e. `do_claims` must also be true and have succeeded);
+silently does nothing otherwise.
+
 SECURITY UPGRADE PATH (dormant): to switch to password-protected download,
 re-enable the password block in this function and in preprocess(). See
 PROPOSAL.md for the full spec.
 """
-function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_checks::Bool = true, do_claims::Bool = false)
+function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_checks::Bool = true, do_claims::Bool = false,
+                              do_crosscheck::Bool = false)
     claims_helpers_src = read(joinpath(@__DIR__, "claims_runner_helpers.jl"), String)
+    crosscheck_helpers_src = read(joinpath(@__DIR__, "crosscheck_runner_helpers.jl"), String)
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
         write(io, """
         using YAML
@@ -598,6 +611,13 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
         # write_runner_script for the single source of truth.
         $(claims_helpers_src)
 
+        # ── Stage D: claims-vs-package crosscheck (JPE-Reproducibility/JPE.jl#38) ──
+        # Shared helpers spliced in verbatim from crosscheck_runner_helpers.jl,
+        # same reasoning as Stage C above. Only the prompt/schema/cmd/scoring
+        # functions are defined here -- the actual Stage D run happens below,
+        # after Stage A has produced report-data-dependencies.md.
+        $(crosscheck_helpers_src)
+
         if $(do_claims)
             claims_dir = joinpath(ENV["GITHUB_WORKSPACE"], "generated")
             mkpath(claims_dir)
@@ -726,6 +746,61 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                     end
                 end
                 @info "✓ Wrote \$(length(rels)) path(s) to generated/force-add-files.txt"
+            end
+
+            # ── Stage D: claims-vs-package crosscheck (JPE-Reproducibility/JPE.jl#38) ──
+            # Must run here, before the "cap oversized reports" step below --
+            # that step replaces a large report-data-dependencies.md with a
+            # short placeholder + Dropbox link, which would starve this of
+            # its main evidence source. Requires claims.json (Stage C, above)
+            # to already exist -- silently skipped otherwise (e.g. Stage C
+            # was disabled, or found no usable paper source).
+            if $(do_crosscheck)
+                gen_dir = joinpath(ENV["GITHUB_WORKSPACE"], "generated")
+                crosscheck_claims_path = joinpath(gen_dir, "claims.json")
+                crosscheck_json_path = joinpath(gen_dir, "crosscheck.json")
+                crosscheck_report_path = joinpath(gen_dir, "report-crosscheck.md")
+
+                if !isfile(crosscheck_claims_path)
+                    @info "no claims.json — skipping Stage D crosscheck"
+                elseif isfile(crosscheck_json_path)
+                    @info "crosscheck.json already exists — skipping Stage D re-run"
+                else
+                    bundle_dir = mktempdir()
+                    try
+                        cp(crosscheck_claims_path, joinpath(bundle_dir, "claims.json"))
+                        write(joinpath(bundle_dir, "data_dependencies.md"),
+                              read_or_placeholder(joinpath(gen_dir, "report-data-dependencies.md"), "(not available)"))
+                        write(joinpath(bundle_dir, "readme_structure.md"),
+                              read_or_placeholder(joinpath(gen_dir, "report-readme-structure.md"), "(not available)"))
+                        write(joinpath(bundle_dir, "code_manifest.txt"),
+                              read_or_placeholder(joinpath(gen_dir, "program-files-manifest.csv"),
+                                                   read_or_placeholder(joinpath(gen_dir, "program-files.txt"), "(not available)")))
+                        write(joinpath(bundle_dir, "data_manifest.txt"),
+                              read_or_placeholder(joinpath(gen_dir, "data-files-manifest.csv"), "(not available)"))
+
+                        extraction = run_claude_crosscheck(bundle_dir)
+                        verdicts = extraction.result["verdicts"]
+                        orphan_code_files = extraction.result["orphan_code_files"]
+                        coverage = compute_coverage(verdicts)
+
+                        open(crosscheck_json_path, "w") do jio
+                            JSON.print(jio, Dict("verdicts" => verdicts, "coverage" => coverage,
+                                                  "orphan_code_files" => orphan_code_files), 2)
+                        end
+                        write(crosscheck_report_path, render_crosscheck_report(verdicts, coverage, orphan_code_files))
+                        @info "✓ Stage D crosscheck complete, cost \\\$\$(extraction.cost_usd), overall coverage \$(coverage["overall"])%"
+                    catch e
+                        @warn "Stage D crosscheck failed" exception=e
+                        open(crosscheck_report_path, "w") do rio
+                            println(rio, "### Paper vs. Code/Data Crosscheck")
+                            println(rio, "")
+                            println(rio, "**Failed**: \$e")
+                        end
+                    finally
+                        rm(bundle_dir, recursive=true, force=true)
+                    end
+                end
             end
 
             # ── Cap oversized generated report files ───────────────────────────

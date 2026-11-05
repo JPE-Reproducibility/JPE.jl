@@ -51,11 +51,12 @@ function gh_pull(paper_id; round=nothing)
     end
 
     r = NamedTuple(paper[1, :])
- 
+    use_round = isnothing(round) ? r.round : round
+
     # Set up paths
-    localloc = get_dbox_loc(r.journal, r.paper_slug, r.round, full = true)
+    localloc = get_dbox_loc(r.journal, r.paper_slug, use_round, full = true)
     repo_path = joinpath(localloc, "repo")
-    
+
     # Handle repository - check if it exists first
     if isdir(repo_path)
         @info "Repository already exists at $repo_path"
@@ -69,7 +70,7 @@ function gh_pull(paper_id; round=nothing)
         end
     else
         # Clone if it doesn't exist
-        gh_clone_branch(r.gh_org_repo, "round$(r.round)", to = repo_path)
+        gh_clone_branch(r.gh_org_repo, "round$(use_round)", to = repo_path)
         @info "Cloned repository to $repo_path"
     end
     return (r,repo_path)
