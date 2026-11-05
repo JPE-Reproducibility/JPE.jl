@@ -17,23 +17,53 @@ function refine_token()
 end
 
 """
-    find_paper_pdf(author_dir::String, appendices_dir::String)
+    find_pdf_in_dir(dir::String)
 
-Pick which local Dropbox folder to search for the paper's PDF: prefer
-`paper-author/` if it contains any `.pdf`, else fall back to
-`paper-appendices/`. Returns the full path to the first `.pdf` found, or
-`nothing` if neither folder has one.
+Look for a `.pdf` directly under `dir`. If none is found, fall back to
+unzipping any `.zip` archive under `dir` (authors sometimes bundle the paper
+PDF inside a zip, e.g. alongside appendices) into a temp dir and searching
+that instead. Returns the full path to the first `.pdf` found, or `nothing`.
 """
-function find_paper_pdf(author_dir::String, appendices_dir::String)
-    has_pdf(dir) = isdir(dir) && any(endswith(lowercase(f), ".pdf") for (_, _, files) in walkdir(dir) for f in files)
-    dir = has_pdf(author_dir) ? author_dir : (has_pdf(appendices_dir) ? appendices_dir : nothing)
-    isnothing(dir) && return nothing
+function find_pdf_in_dir(dir::String)
+    isdir(dir) || return nothing
     for (root, _, files) in walkdir(dir)
         for f in files
             endswith(lowercase(f), ".pdf") && return joinpath(root, f)
         end
     end
+    for (root, _, files) in walkdir(dir)
+        for f in files
+            endswith(lowercase(f), ".zip") || continue
+            zip_path = joinpath(root, f)
+            tmp = mktempdir()
+            try
+                run(`unzip -oq $zip_path -d $tmp`)
+            catch e
+                @warn "could not unzip $zip_path while searching for paper PDF" exception=e
+                continue
+            end
+            for (r2, _, files2) in walkdir(tmp)
+                for f2 in files2
+                    endswith(lowercase(f2), ".pdf") && return joinpath(r2, f2)
+                end
+            end
+        end
+    end
     return nothing
+end
+
+"""
+    find_paper_pdf(author_dir::String, appendices_dir::String)
+
+Pick which local Dropbox folder to search for the paper's PDF: prefer
+`paper-author/`, else fall back to `paper-appendices/`. Within each folder,
+checks bare `.pdf` files first, then `.pdf`s inside any `.zip` archive (see
+`find_pdf_in_dir`). Returns `nothing` if neither folder yields one.
+"""
+function find_paper_pdf(author_dir::String, appendices_dir::String)
+    pdf = find_pdf_in_dir(author_dir)
+    isnothing(pdf) || return pdf
+    return find_pdf_in_dir(appendices_dir)
 end
 
 """
