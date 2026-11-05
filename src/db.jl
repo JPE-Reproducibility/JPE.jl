@@ -723,6 +723,10 @@ function db_get_table_schema(table::String)
             "preprocess_mode" => Dict(:type => "VARCHAR", :constraints => ""),
             "billed_at" => Dict(:type => "TIMESTAMP", :constraints => ""),
             "billed_period" => Dict(:type => "VARCHAR", :constraints => ""),
+            "refine_document_id" => Dict(:type => "VARCHAR", :constraints => ""),
+            "refine_review_id" => Dict(:type => "VARCHAR", :constraints => ""),
+            "refine_status" => Dict(:type => "VARCHAR", :constraints => ""),
+            "refine_digest" => Dict(:type => "VARCHAR", :constraints => ""),
             "_primary_key" => Dict(:columns => ["paper_id", "round"])
         ),
         "reports" => Dict(
