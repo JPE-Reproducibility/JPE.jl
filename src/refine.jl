@@ -76,20 +76,29 @@ ends without either.
 function refine_read_sse(url::String)
     result = nothing
     HTTP.open(:GET, url) do stream
+        # Read in chunks via readavailable/eof rather than eachline(stream) --
+        # HTTP.Stream has no internal buffering, so eachline reads one byte at
+        # a time and warns about it (HTTP.Streams.jl#246).
+        leftover = ""
         data_buf = ""
-        for line in eachline(stream)
-            if isempty(line)
-                isempty(data_buf) && continue
-                evt = JSON.parse(data_buf)
-                data_buf = ""
-                if evt["type"] == "complete"
-                    result = evt["result"]
-                    break
-                elseif evt["type"] == "error"
-                    error("refine.ink SSE error: $(get(evt, "error", evt))")
+        while !eof(stream)
+            leftover *= String(readavailable(stream))
+            while (nl = findfirst('\n', leftover)) !== nothing
+                line = rstrip(leftover[1:nl-1], '\r')
+                leftover = leftover[nl+1:end]
+                if isempty(line)
+                    isempty(data_buf) && continue
+                    evt = JSON.parse(data_buf)
+                    data_buf = ""
+                    if evt["type"] == "complete"
+                        result = evt["result"]
+                        return
+                    elseif evt["type"] == "error"
+                        error("refine.ink SSE error: $(get(evt, "error", evt))")
+                    end
+                elseif startswith(line, "data:")
+                    data_buf *= strip(line[6:end])
                 end
-            elseif startswith(line, "data:")
-                data_buf *= strip(line[6:end])
             end
         end
     end
