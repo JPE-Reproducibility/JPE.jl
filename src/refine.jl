@@ -9,6 +9,12 @@
 # up completed reviews and write a short digest, surfaced via ps().
 
 const REFINE_BASE_URL = "https://api.refine.ink"
+# The JPE refine.ink credits live on the "Journal of Political Economy" org,
+# not the personal account behind JPE_REFINE (which has 0 paid credits) --
+# every call must carry this header/query param or the API 403s with
+# "no-credits" even though the org has a balance. Overridable via
+# JPE_REFINE_ORG in case the org id ever changes or a different account is used.
+const REFINE_ORGANIZATION = get(ENV, "JPE_REFINE_ORG", "org_36u32nIIdbgzrtFRjD4HVy64a5B")
 
 function refine_token()
     token = get(ENV, "JPE_REFINE", nothing)
@@ -117,10 +123,12 @@ function refine_upload_document(filepath::String)
     token = refine_token()
 
     form = HTTP.Form(Dict("file" => HTTP.Multipart(basename(filepath), open(filepath), "application/pdf")))
-    resp = HTTP.post("$REFINE_BASE_URL/documents/upload", ["Authorization" => "Bearer $token"], form)
+    resp = HTTP.post("$REFINE_BASE_URL/documents/upload",
+                      ["Authorization" => "Bearer $token", "X-Refine-Organization" => REFINE_ORGANIZATION],
+                      form)
     data = JSON.parse(String(resp.body))
 
-    events_url = "$REFINE_BASE_URL/documents/upload/events/$(data["task_id"])?token=$token&organization=personal"
+    events_url = "$REFINE_BASE_URL/documents/upload/events/$(data["task_id"])?token=$token&organization=$REFINE_ORGANIZATION"
     result = refine_read_sse(events_url)
     return result["document_id"]
 end
@@ -135,7 +143,8 @@ take 5-20+ min) -- see `check_referee_reviews()`.
 function refine_start_processing(document_id::String)
     token = refine_token()
     resp = HTTP.post("$REFINE_BASE_URL/documents/$document_id/process",
-                      ["Authorization" => "Bearer $token", "Content-Type" => "application/json"],
+                      ["Authorization" => "Bearer $token", "Content-Type" => "application/json",
+                       "X-Refine-Organization" => REFINE_ORGANIZATION],
                       JSON.json(Dict("preview" => false)))
     data = JSON.parse(String(resp.body))
     return data["review_id"]
@@ -148,7 +157,8 @@ Fetch the current state of a review (still-processing or completed).
 """
 function refine_get_review(review_id::String)
     token = refine_token()
-    resp = HTTP.get("$REFINE_BASE_URL/reviews/$review_id", ["Authorization" => "Bearer $token"])
+    resp = HTTP.get("$REFINE_BASE_URL/reviews/$review_id",
+                     ["Authorization" => "Bearer $token", "X-Refine-Organization" => REFINE_ORGANIZATION])
     return JSON.parse(String(resp.body))
 end
 
