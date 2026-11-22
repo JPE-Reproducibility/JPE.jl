@@ -4,7 +4,7 @@
 # Deliberately NOT folded into preprocess()'s runner_precheck.jl like Stage
 # C/D: this call is slow (5-20+ min to process) and external, so it's kept as
 # its own fire-and-forget step -- request_referee_review() uploads the PDF
-# and starts processing, then returns immediately; check_referee_reviews()
+# and starts processing, then returns immediately; refine_check_referee_reviews()
 # (mirroring monitor_file_requests() in actions.jl) is called later to pick
 # up completed reviews and write a short digest, surfaced via ps().
 
@@ -138,7 +138,7 @@ end
 
 Start full proofreading (1 paid credit) for an already-uploaded document.
 Returns the `review_id`; does NOT wait for the review to finish (that can
-take 5-20+ min) -- see `check_referee_reviews()`.
+take 5-20+ min) -- see `refine_check_referee_reviews()`.
 """
 function refine_start_processing(document_id::String)
     token = refine_token()
@@ -225,7 +225,7 @@ end
 Upload the paper's PDF (from `paper-author/`, else `paper-appendices/`) to
 refine.ink and kick off proofreading. Stores `refine_document_id`,
 `refine_review_id`, and `refine_status = "processing"` on the iteration row
-and returns immediately -- call `check_referee_reviews()` later to pick up
+and returns immediately -- call `refine_check_referee_reviews()` later to pick up
 the result.
 """
 function request_referee_review(paperID, round)
@@ -245,12 +245,12 @@ function request_referee_review(paperID, round)
     db_update_cell("iterations", cond, "refine_document_id", document_id)
     db_update_cell("iterations", cond, "refine_review_id", review_id)
     db_update_cell("iterations", cond, "refine_status", "processing")
-    @info "✓ referee review requested for $paperID round $round (review_id=$review_id) — check back with check_referee_reviews()"
+    @info "✓ referee review requested for $paperID round $round (review_id=$review_id) — check back with refine_check_referee_reviews()"
     return review_id
 end
 
 """
-    check_referee_reviews()
+    refine_check_referee_reviews()
 
 Poll refine.ink for every iteration row currently `refine_status ==
 "processing"`. For any that have completed: write a short digest, flip
@@ -262,7 +262,7 @@ round-trip, and this is DE-only anyway, same as those). Mirrors
 `monitor_file_requests()`'s shape: best-effort per row, a failure on one
 paper doesn't stop the rest.
 """
-function check_referee_reviews()
+function refine_check_referee_reviews()
     i = subset(db_df("iterations"), :refine_status => ByRow(x -> !ismissing(x) && x == "processing"))
 
     for r in eachrow(i)

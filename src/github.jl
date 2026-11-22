@@ -284,7 +284,8 @@ function sanitize_repo_name(name::AbstractString; interactive::Bool=true)
     for c in name
         if haskey(translit_map, c)
             print(buf, translit_map[c])
-        elseif c in 'A':'Z' || c in 'a':'z' || c in '0':'9' || isspace(c)
+        elseif c in 'A':'Z' || c in 'a':'z' || c in '0':'9' || isspace(c) ||
+               c in ('-', '_', '.', '\'')
             print(buf, c)
         else
             push!(unknown_chars, c)
@@ -299,7 +300,8 @@ function sanitize_repo_name(name::AbstractString; interactive::Bool=true)
 
         # After stripping, check if any unexpected chars remain
         still_bad = filter(c -> !(c in 'A':'Z' || c in 'a':'z' ||
-                                  c in '0':'9' || isspace(c)), stripped)
+                                  c in '0':'9' || isspace(c) ||
+                                  c in ('-', '_', '.', '\'')), stripped)
 
         if !isempty(still_bad) && interactive
             println("Unrecognized characters found: ", still_bad)

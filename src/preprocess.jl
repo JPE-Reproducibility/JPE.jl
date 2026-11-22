@@ -113,7 +113,7 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
 
     # Automated referee review (refine.ink). Deliberately decoupled from the
     # rest of preprocess(): it's a slow (5-20+ min) external call that's
-    # checked back on later via check_referee_reviews(), not something the
+    # checked back on later via refine_check_referee_reviews(), not something the
     # local/gh-runner branches below wait on -- so a failure here is a
     # warning, not a reason to abort preprocessing.
     println()
@@ -122,7 +122,7 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     if request(refine_prompt) == 1
         try
             request_referee_review(paperID, round)
-            @info "⏳ remember to run check_referee_reviews() later (e.g. once a day, alongside monitor_file_requests()) to pick up the result"
+            @info "⏳ remember to run refine_check_referee_reviews() later (e.g. once a day, alongside monitor_file_requests()) to pick up the result"
         catch e
             @warn "Could not request referee review from refine.ink" exception=e
         end
