@@ -83,6 +83,58 @@ function extract_paper_text(dir::String; main_files::Union{Nothing,Vector{String
 end
 
 """
+    build_extract_pdf_text_script(pdf_path, out_json)
+
+The Julia source run inside `JULIA_RUNNER_ENV` to call
+`PackageScanner.extract_pdf_text(pdf_path)` and write its result as JSON to
+`out_json`. Mirrors `build_extract_paper_text_script`'s split for the same
+testability reason -- generated script text testable without actually
+running Julia/PackageScanner.
+"""
+function build_extract_pdf_text_script(pdf_path::String, out_json::String)
+    """
+    using PackageScanner, JSON
+    r = PackageScanner.extract_pdf_text($(repr(pdf_path)))
+    open($(repr(out_json)), "w") do io
+        JSON.print(io, Dict(
+            "text" => r.text,
+            "roots" => r.roots,
+            "unresolved" => [collect(u) for u in r.unresolved],
+            "ambiguous" => r.ambiguous,
+        ))
+    end
+    """
+end
+
+"""
+    extract_paper_pdf_text(pdf_path::String)
+
+Shell out to `JULIA_RUNNER_ENV` to extract text from the paper's compiled
+PDF at `pdf_path` (see `PackageScanner.extract_pdf_text`) -- the Stage C
+fallback used by `extract_paper_claims` when `extract_paper_text` found no
+`.tex` root at all. Returns the same named tuple shape as
+`extract_paper_text`: `(text, roots, unresolved, ambiguous)`.
+"""
+function extract_paper_pdf_text(pdf_path::String)
+    haskey(ENV, "JULIA_RUNNER_ENV") || error("JULIA_RUNNER_ENV not set")
+
+    out_json = tempname() * ".json"
+    script = build_extract_pdf_text_script(pdf_path, out_json)
+
+    run(`julia --project=$(ENV["JULIA_RUNNER_ENV"]) -e $script`)
+
+    result = JSON.parsefile(out_json)
+    rm(out_json, force = true)
+
+    return (
+        text = result["text"],
+        roots = result["roots"],
+        unresolved = [Tuple(u) for u in result["unresolved"]],
+        ambiguous = result["ambiguous"],
+    )
+end
+
+"""
     extract_paper_claims(paperID; round = nothing, out_dir, force = false, main_files = nothing)
 
 Stage C claims extraction: locate the paper's LaTeX source (preferring
@@ -94,8 +146,9 @@ to avoid re-spending on an unchanged paper).
 
 If LaTeX source discovery is ambiguous (multiple candidate main files),
 prompts interactively for which to use, re-resolves, and proceeds. If no
-`.tex` source is found at all, warns and returns `nothing` (the PDF fallback
-is not implemented here).
+`.tex` source is found at all, falls back to a PDF under `dir` (see
+`find_paper_pdf`/`extract_paper_pdf_text`) if one exists; warns and returns
+`nothing` only if neither a `.tex` nor a `.pdf` source can be found.
 """
 function extract_paper_claims(paperID; round = nothing, out_dir::String, force::Bool = false,
                                main_files::Union{Nothing,Vector{String}} = nothing)
@@ -139,8 +192,13 @@ function extract_paper_claims(paperID; round = nothing, out_dir::String, force::
     end
 
     if isempty(result.roots)
-        @warn "no .tex source found for $paperID round $round under $dir -- PDF fallback not implemented, skipping claims extraction"
-        return nothing
+        pdf_path = find_paper_pdf(dir)
+        if isnothing(pdf_path)
+            @warn "no .tex or .pdf source found for $paperID round $round under $dir -- skipping claims extraction"
+            return nothing
+        end
+        @info "no .tex source found for $paperID round $round -- falling back to PDF at $pdf_path"
+        result = extract_paper_pdf_text(pdf_path)
     end
 
     mkpath(out_dir)

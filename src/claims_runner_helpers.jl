@@ -34,6 +34,33 @@ called from a session that isn't itself a nested claude-jpe invocation).
 claude_jpe_config_dir() = get(ENV, "CLAUDE_CONFIG_DIR", joinpath(homedir(), ".claude-jpe"))
 
 """
+    find_paper_pdf(dir::String) -> Union{String,Nothing}
+
+Stage C PDF fallback (JPE-Reproducibility/PackageScanner.jl, `extract_pdf_text`):
+find a compiled PDF of the paper under `dir`, for use when
+`PackageScanner.extract_latex_text` found no `.tex` root at all. Prefers a
+file literally named `paper.pdf` (case-insensitive) if present, else the
+first `.pdf` found (sorted, for determinism across runs). Returns `nothing`
+if no PDF exists anywhere under `dir`.
+
+Pure filesystem walking, no PackageScanner/JULIA_RUNNER_ENV dependency --
+unlike `extract_latex_text`/`extract_pdf_text` themselves, this can run
+directly in either JPE.jl or the generated runner script.
+"""
+function find_paper_pdf(dir::String)
+    pdfs = String[]
+    for (root, _, files) in walkdir(dir)
+        for f in files
+            endswith(lowercase(f), ".pdf") && push!(pdfs, joinpath(root, f))
+        end
+    end
+    isempty(pdfs) && return nothing
+    sort!(pdfs)
+    named = findfirst(p -> lowercase(basename(p)) == "paper.pdf", pdfs)
+    return isnothing(named) ? first(pdfs) : pdfs[named]
+end
+
+"""
     CLAIMS_JSON_SCHEMA
 
 JSON schema passed to `claude -p --json-schema` to force structured claims

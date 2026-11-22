@@ -418,11 +418,13 @@ A local-copy fallback is retained for local preprocessing runs.
 If `do_claims` is true, the script also runs Stage C claims extraction
 (JPE-Reproducibility/JPE.jl#34) against whatever landed in `paper-source/`
 right above: `claims.json` already present means "skip" (no force-rerun from
-here -- use `extract_paper_claims(...; force=true)` manually for that), an
-ambiguous or missing `.tex` source means "skip and write
+here -- use `extract_paper_claims(...; force=true)` manually for that); an
+ambiguous `.tex` source (multiple candidate roots) means "skip and write
 generated/report-claims-extraction.md explaining why" (no interactive
 disambiguation is possible in an unattended script -- same reasoning as the
-rest of this unattended run).
+rest of this unattended run); no `.tex` source at all falls back to a PDF
+under `paper-source/` (`find_paper_pdf`/`PackageScanner.extract_pdf_text`),
+and only skips if neither a `.tex` nor a `.pdf` source can be found.
 
 If `do_crosscheck` is true, the script also runs Stage D crosscheck
 (JPE-Reproducibility/JPE.jl#38) right after Stage A/C, matching claims.json
@@ -665,36 +667,50 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                         println(rio, "")
                         println(rio, "Resolve manually from a JPE.jl session with `extract_paper_claims(paperID; main_files=[...])`, then re-run preprocess.")
                     end
-                elseif isempty(tex_result.roots)
-                    @warn "no .tex source found under paper-source/ — skipping Stage C claims extraction"
-                    open(claims_report_path, "w") do rio
-                        println(rio, "# Stage C: Claims Extraction")
-                        println(rio, "")
-                        println(rio, "**Skipped**: no `.tex` source found under `paper-source/`. PDF fallback is not implemented.")
-                    end
                 else
-                    flattened_path = joinpath(paper_dest_path, "_flattened.tex")
-                    write(flattened_path, tex_result.text)
-                    try
-                        extraction = run_claude_claims_extraction(flattened_path)
-                        open(claims_json_path, "w") do jio
-                            JSON.print(jio, extraction.claims, 2)
-                        end
+                    # No .tex root at all -> fall back to a PDF under
+                    # paper-source/ (find_paper_pdf, spliced in above from
+                    # claims_runner_helpers.jl) before giving up entirely.
+                    source_result, source_note = if !isempty(tex_result.roots)
+                        tex_result, "LaTeX source (\$(length(tex_result.roots)) root file(s))"
+                    else
+                        pdf_path = find_paper_pdf(paper_dest_path)
+                        isnothing(pdf_path) ?
+                            (nothing, nothing) :
+                            (PackageScanner.extract_pdf_text(pdf_path), "PDF fallback (`\$pdf_path`, no .tex source found)")
+                    end
+
+                    if isnothing(source_result)
+                        @warn "no .tex or .pdf source found under paper-source/ — skipping Stage C claims extraction"
                         open(claims_report_path, "w") do rio
                             println(rio, "# Stage C: Claims Extraction")
                             println(rio, "")
-                            println(rio, "**Done** (\$(Dates.now())). Extraction cost: \\\$\$(extraction.cost_usd)")
+                            println(rio, "**Skipped**: no `.tex` or `.pdf` source found under `paper-source/`.")
                         end
-                        @info "✓ Stage C claims extraction complete, cost \\\$\$(extraction.cost_usd)"
-                    catch e
-                        @warn "Stage C claims extraction failed" exception=e
-                        open(claims_report_path, "w") do rio
-                            println(rio, "# Stage C: Claims Extraction")
-                            println(rio, "")
-                            println(rio, "**Failed**: \$e")
+                    else
+                        flattened_path = joinpath(paper_dest_path, "_flattened.tex")
+                        write(flattened_path, source_result.text)
+                        try
+                            extraction = run_claude_claims_extraction(flattened_path)
+                            open(claims_json_path, "w") do jio
+                                JSON.print(jio, extraction.claims, 2)
+                            end
+                            open(claims_report_path, "w") do rio
+                                println(rio, "# Stage C: Claims Extraction")
+                                println(rio, "")
+                                println(rio, "**Done** (\$(Dates.now())), via \$source_note. Extraction cost: \\\$\$(extraction.cost_usd)")
+                            end
+                            @info "✓ Stage C claims extraction complete, cost \\\$\$(extraction.cost_usd)"
+                        catch e
+                            @warn "Stage C claims extraction failed" exception=e
+                            open(claims_report_path, "w") do rio
+                                println(rio, "# Stage C: Claims Extraction")
+                                println(rio, "")
+                                println(rio, "**Failed**: \$e")
+                            end
+                        finally
+                            rm(flattened_path, force=true)
                         end
-                    finally
-                        rm(flattened_path, force=true)
                     end
                 end
             end
