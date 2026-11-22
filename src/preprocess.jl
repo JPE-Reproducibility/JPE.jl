@@ -113,7 +113,7 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
 
     # Automated referee review (refine.ink). Deliberately decoupled from the
     # rest of preprocess(): it's a slow (5-20+ min) external call that's
-    # checked back on later via check_referee_reviews(), not something the
+    # checked back on later via refine_check_referee_reviews(), not something the
     # local/gh-runner branches below wait on -- so a failure here is a
     # warning, not a reason to abort preprocessing.
     println()
@@ -122,7 +122,7 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
     if request(refine_prompt) == 1
         try
             request_referee_review(paperID, round)
-            @info "⏳ remember to run check_referee_reviews() later (e.g. once a day, alongside monitor_file_requests()) to pick up the result"
+            @info "⏳ remember to run refine_check_referee_reviews() later (e.g. once a day, alongside monitor_file_requests()) to pick up the result"
         catch e
             @warn "Could not request referee review from refine.ink" exception=e
         end
@@ -460,6 +460,7 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                               do_crosscheck::Bool = false)
     claims_helpers_src = read(joinpath(@__DIR__, "claims_runner_helpers.jl"), String)
     crosscheck_helpers_src = read(joinpath(@__DIR__, "crosscheck_runner_helpers.jl"), String)
+    report_capping_helpers_src = read(joinpath(@__DIR__, "report_capping_helpers.jl"), String)
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
         write(io, """
         using YAML
@@ -695,6 +696,11 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
         # after Stage A has produced report-data-dependencies.md.
         $(crosscheck_helpers_src)
 
+        # Shared helpers spliced in verbatim from report_capping_helpers.jl,
+        # same reasoning as Stage C/D above -- used below by the "Cap oversized
+        # generated report files" step.
+        $(report_capping_helpers_src)
+
         if $(do_claims)
             claims_dir = joinpath(ENV["GITHUB_WORKSPACE"], "generated")
             mkpath(claims_dir)
@@ -903,32 +909,26 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                 end
             end
 
-            # ── Cap oversized generated report files ───────────────────────────
+            # ── Cap oversized generated report files & route appendices ────────
             # A full copy goes to a permanent Dropbox link (see large_reports_url
             # in _variables.yml) instead of a GitHub Actions artifact: paper repos
             # are private and authors never get repo access, so an artifact link
             # would be unreachable to them -- and artifacts expire after 90 days
             # regardless. The Dropbox folder link does not expire.
-            let max_bytes = 5 * 1024 * 1024
-                gen_dir = joinpath(ENV["GITHUB_WORKSPACE"], "generated")
+            #
+            # cap_and_route_reports! (spliced in above from
+            # report_capping_helpers.jl) always routes *-appendix.md files
+            # (PackageScanner.jl's own main+appendix convention, e.g.
+            # report-pii.md / report-pii-appendix.md) regardless of size, and
+            # truncates any other report-*.md file over DEFAULT_REPORT_MAX_LINES
+            # -- so no overflow content from generated/ ever ends up embedded in
+            # the compiled report.
+            let gen_dir = joinpath(ENV["GITHUB_WORKSPACE"], "generated")
                 reports_url = get(vars, "large_reports_url", nothing)
                 if isdir(gen_dir) && !isnothing(reports_url) && haskey(ENV, "JPE_DBOX_APPS")
                     reports_dest = joinpath(ENV["JPE_DBOX_APPS"], vars["dropbox_rel_path"], "large-reports")
-                    for f in readdir(gen_dir; join=true)
-                        (isfile(f) && endswith(f, ".md")) || continue
-                        sz = filesize(f)
-                        sz > max_bytes || continue
-                        fname = basename(f)
-                        lines = countlines(f)
-                        size_mb = round(sz / 1024^2, digits=1)
-                        mkpath(reports_dest)
-                        cp(f, joinpath(reports_dest, fname); force=true)
-                        open(f, "w") do fio
-                            println(fio, "> **Note**: This list contains \$lines entries (\$size_mb MB) — too large to embed in the report.")
-                            println(fio, "> The full list is available here: <\$reports_url>")
-                        end
-                        @info "Capped \$fname (\$size_mb MB, \$lines lines) — full copy sent to Dropbox"
-                    end
+                    routed = cap_and_route_reports!(gen_dir, reports_dest, reports_url)
+                    isempty(routed) || @info "Routed to Dropbox large-reports/: \$(join(routed, ", "))"
                 end
             end
         else
