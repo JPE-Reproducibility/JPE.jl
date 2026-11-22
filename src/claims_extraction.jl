@@ -33,6 +33,48 @@ function find_paper_source_dir(author_dir::String, appendices_dir::String)
 end
 
 """
+    has_any_content(dir::String) -> Bool
+
+True iff `dir` exists and contains at least one entry. Used to detect
+"nothing was uploaded here" as distinct from "a .tex isn't directly
+visible yet because it's still zipped up" (see `find_paper_source_round`).
+"""
+has_any_content(dir::String) = isdir(dir) && !isempty(readdir(dir))
+
+"""
+    find_paper_source_round(dbox_apps_root, journal, paper_slug, current_round)
+
+Most papers do NOT resubmit the full paper + LaTeX source on a revision
+round -- only the replication package changes round over round, so
+`current_round`'s `paper-author/`/`paper-appendices/` are typically empty
+past round 1. `preprocess()` used to mint a Dropbox link straight to
+`current_round`'s folders regardless, silently producing a link to nothing
+and a Stage C report of "no paper source available" even though the real
+paper sits one or more rounds back.
+
+Walks backward from `current_round` to round 1, applying
+`find_paper_source_dir`'s author-over-appendices preference within each
+round, and returns the first round where *either* subfolder has any
+content at all -- content, not necessarily a bare `.tex` file: it may be
+a zip that still needs unpacking (see the nested-zip handling in
+`write_runner_script`'s paper-source fetch step).
+
+Returns `(dir, round, subfolder)` for the first round with content found,
+or `nothing` if no round from `current_round` down to 1 has anything.
+"""
+function find_paper_source_round(dbox_apps_root::String, journal::String, paper_slug::String, current_round::Int)
+    for round in current_round:-1:1
+        author_dir = joinpath(dbox_apps_root, journal, paper_slug, string(round), "paper-author")
+        appendices_dir = joinpath(dbox_apps_root, journal, paper_slug, string(round), "paper-appendices")
+        (has_any_content(author_dir) || has_any_content(appendices_dir)) || continue
+        chosen = find_paper_source_dir(author_dir, appendices_dir)
+        subfolder = chosen == author_dir ? "paper-author" : "paper-appendices"
+        return (dir = chosen, round = round, subfolder = subfolder)
+    end
+    return nothing
+end
+
+"""
     build_extract_paper_text_script(dir, out_json; main_files = nothing)
 
 The Julia source run inside `JULIA_RUNNER_ENV` to call

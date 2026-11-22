@@ -146,16 +146,27 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
 
     # Same mechanism, second link: the paper's LaTeX source, so the runner
     # (local or gh-runner) can fetch it too, not just the replication package.
-    # Prefer paper-author/ (clean author upload, #30) if it has any .tex,
-    # else fall back to paper-appendices/ (pre-#30 papers). See
-    # JPE-Reproducibility/JPE.jl#34.
-    author_subpath = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "paper-author")
-    appendices_subpath = "/" * joinpath(r.journal, r.paper_slug, string(r.round), "paper-appendices")
-    author_dir_full = string(ENV["JPE_DBOX_APPS"], author_subpath)
-    appendices_dir_full = string(ENV["JPE_DBOX_APPS"], appendices_subpath)
-    chosen_paper_dir = find_paper_source_dir(author_dir_full, appendices_dir_full)
-    paper_source_subfolder = chosen_paper_dir == author_dir_full ? "paper-author" : "paper-appendices"
-    paper_dropbox_path = chosen_paper_dir == author_dir_full ? author_subpath : appendices_subpath
+    # Most papers do NOT resubmit the paper itself on a revision round --
+    # only the replication package changes -- so round > 1's own
+    # paper-author/paper-appendices are typically empty. find_paper_source_round
+    # (JPE-Reproducibility/JPE.jl#<fallback>) walks backward to the most recent
+    # round that actually has something, preferring paper-author/ (clean
+    # author upload, #30) over paper-appendices/ (pre-#30 / journal-office
+    # dump) within whichever round it lands on.
+    found_paper_source = find_paper_source_round(ENV["JPE_DBOX_APPS"], r.journal, r.paper_slug, round)
+    paper_source_round, paper_source_subfolder = if isnothing(found_paper_source)
+        # Nothing at all, current round back to round 1 -- keep the old
+        # current-round/paper-appendices default so the existing "no paper
+        # source" skip behavior downstream is unchanged.
+        (round, "paper-appendices")
+    else
+        (found_paper_source.round, found_paper_source.subfolder)
+    end
+    if paper_source_round != round
+        @info "No paper source for round $round — using round $paper_source_round's $paper_source_subfolder/ instead"
+    end
+    paper_dropbox_path = "/" * joinpath(r.journal, r.paper_slug, string(paper_source_round), paper_source_subfolder)
+    paper_source_dropbox_rel_path = get_case_id(r.journal, r.paper_slug, paper_source_round)
     @info "Creating public Dropbox link for $paper_dropbox_path"
     paper_link_url = dbox_link_at_path(paper_dropbox_path, dbox_token, expiry = 15)
     isnothing(paper_link_url) && error("dbox_link_at_path returned nothing for $paper_dropbox_path — check Dropbox credentials and path")
@@ -191,6 +202,11 @@ function preprocess(paperID; which_round = nothing, max_pkg_size_gb = 10, max_fi
         println(io, "package_max_pkg_size_gb: $(max_pkg_size_gb)")
         println(io, "large_reports_url: \"$(large_reports_url)\"")
         println(io, "paper_source_subfolder: \"$(paper_source_subfolder)\"")
+        println(io, "paper_source_round: $(paper_source_round)")
+        # Separate from dropbox_rel_path (always the *package* round): the
+        # local-fallback paper-source fetch needs the round paper_source_round
+        # was actually found in, which may be an earlier round than this one.
+        println(io, "paper_source_dropbox_rel_path: \"$(paper_source_dropbox_rel_path)\"")
     end
 
     # add a run badge to the README and change title
@@ -593,10 +609,29 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
 
         if !paper_downloaded_ok
             try
-                paper_source_path = joinpath(ENV["JPE_DBOX_APPS"], vars["dropbox_rel_path"], vars["paper_source_subfolder"])
+                paper_source_path = joinpath(ENV["JPE_DBOX_APPS"], vars["paper_source_dropbox_rel_path"], vars["paper_source_subfolder"])
                 if isdir(paper_source_path)
                     isdir(paper_dest_path) && rm(paper_dest_path; recursive=true, force=true)
-                    PackageScanner.mycp(paper_source_path, paper_dest_path; recursive=true, force=true)
+                    mkpath(paper_dest_path)
+                    # Unzip any nested archive found directly in the source
+                    # folder too (e.g. "Shadi Farahzadi - Paper TEX file.zip")
+                    # -- real-world paper-appendices/ folders often have the
+                    # actual .tex locked inside one of these rather than
+                    # sitting at the top level. Mirrors the remote-download
+                    # branch below.
+                    for f in readdir(paper_source_path; join=true)
+                        if isfile(f) && endswith(lowercase(f), ".zip")
+                            @info "Unzipping nested paper-source archive \$f..."
+                            try
+                                run(`unzip -oq \$f -d \$paper_dest_path`)
+                            catch e
+                                @warn "unzip of \$f exited non-zero" exception=e
+                            end
+                        else
+                            PackageScanner.mycp(f, joinpath(paper_dest_path, basename(f)); recursive=true, force=true)
+                        end
+                    end
+                    rm_git(paper_dest_path)
                     @info "✓ Paper source copied from local Dropbox"
                 else
                     @warn "Paper source not found at \$paper_source_path — skipping (no paper available for Stage C)"
@@ -616,9 +651,32 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
 
             isdir(paper_dest_path) && rm(paper_dest_path; recursive=true, force=true)
             mkpath(paper_dest_path)
-            for f in readdir(tmp_dir; join=true)
-                cp(f, joinpath(paper_dest_path, basename(f)); force=true)
+
+            # Find all nested ZIPs inside the extracted Dropbox folder (e.g.
+            # the author's "Paper + figs + bib.zip", sometimes alongside a
+            # separate journal-office upload) and unzip each of those too --
+            # mirrors the replication-package fetch above. Real-world
+            # paper-appendices/ folders often have the actual .tex locked
+            # inside one of these rather than sitting at the top level.
+            nested_zips = filter(readdir(tmp_dir; join=true)) do f
+                isfile(f) && endswith(lowercase(f), ".zip")
             end
+
+            for f in readdir(tmp_dir; join=true)
+                endswith(lowercase(f), ".zip") || cp(f, joinpath(paper_dest_path, basename(f)); force=true)
+            end
+            if !isempty(nested_zips)
+                @info "Found \$(length(nested_zips)) nested paper-source ZIP(s) to extract" nested_zips
+                for z in nested_zips
+                    @info "Unzipping \$z..."
+                    try
+                        run(`unzip -oq \$z -d \$paper_dest_path`)
+                    catch e
+                        @warn "unzip of \$z exited non-zero" exception=e
+                    end
+                end
+            end
+
             rm_git(paper_dest_path)
             rm(tmp_dir; recursive=true, force=true)
             @info "✓ Paper source unzip complete"
@@ -671,13 +729,22 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                     # No .tex root at all -> fall back to a PDF under
                     # paper-source/ (find_paper_pdf, spliced in above from
                     # claims_runner_helpers.jl) before giving up entirely.
+                    #
+                    # paper_source_round (preprocess()'s find_paper_source_round
+                    # fallback -- most papers don't resubmit the paper itself on
+                    # a revision round) may differ from this round's own
+                    # `round`; note that in the report so it's not mysterious
+                    # later why an older paper got used.
+                    round_note = let psr = get(vars, "paper_source_round", vars["round"])
+                        psr == vars["round"] ? "" : ", from round \$psr"
+                    end
                     source_result, source_note = if !isempty(tex_result.roots)
-                        tex_result, "LaTeX source (\$(length(tex_result.roots)) root file(s))"
+                        tex_result, "LaTeX source (\$(length(tex_result.roots)) root file(s)\$round_note)"
                     else
                         pdf_path = find_paper_pdf(paper_dest_path)
                         isnothing(pdf_path) ?
                             (nothing, nothing) :
-                            (PackageScanner.extract_pdf_text(pdf_path), "PDF fallback (`\$pdf_path`, no .tex source found)")
+                            (PackageScanner.extract_pdf_text(pdf_path), "PDF fallback (`\$pdf_path`, no .tex source found\$round_note)")
                     end
 
                     if isnothing(source_result)
