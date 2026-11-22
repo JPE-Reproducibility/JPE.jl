@@ -34,13 +34,36 @@ called from a session that isn't itself a nested claude-jpe invocation).
 claude_jpe_config_dir() = get(ENV, "CLAUDE_CONFIG_DIR", joinpath(homedir(), ".claude-jpe"))
 
 """
+    JOURNAL_OFFICE_UPLOADER_MARKERS
+
+Filename substrings that identify a file as uploaded by JPE staff rather
+than the author (e.g. the editorial assistant forwarding a copy of the
+accepted manuscript into `paper-appendices/`, filename-prefixed with their
+own name). These are a less-authoritative, potentially-stale fallback --
+the author's own upload should always win when both exist. Add more names
+here as staff turn over; there's no structural way to distinguish uploader
+identity from the filename alone, so this is necessarily manually maintained.
+"""
+const JOURNAL_OFFICE_UPLOADER_MARKERS = ["Connie -"]
+
+"""
+    is_journal_office_upload(path::String) -> Bool
+
+True iff `path`'s filename matches one of `JOURNAL_OFFICE_UPLOADER_MARKERS`.
+"""
+is_journal_office_upload(path::String) = any(m -> occursin(m, basename(path)), JOURNAL_OFFICE_UPLOADER_MARKERS)
+
+"""
     find_paper_pdf(dir::String) -> Union{String,Nothing}
 
 Stage C PDF fallback (JPE-Reproducibility/PackageScanner.jl, `extract_pdf_text`):
 find a compiled PDF of the paper under `dir`, for use when
 `PackageScanner.extract_latex_text` found no `.tex` root at all. Prefers a
-file literally named `paper.pdf` (case-insensitive) if present, else the
-first `.pdf` found (sorted, for determinism across runs). Returns `nothing`
+file literally named `paper.pdf` (case-insensitive) if present; otherwise
+prefers an author-uploaded PDF over one matching
+`JOURNAL_OFFICE_UPLOADER_MARKERS` (the author's own copy is more likely to
+be up to date than a journal-office-forwarded one), then falls back to the
+first PDF found (sorted, for determinism across runs). Returns `nothing`
 if no PDF exists anywhere under `dir`.
 
 Pure filesystem walking, no PackageScanner/JULIA_RUNNER_ENV dependency --
@@ -56,8 +79,12 @@ function find_paper_pdf(dir::String)
     end
     isempty(pdfs) && return nothing
     sort!(pdfs)
+
     named = findfirst(p -> lowercase(basename(p)) == "paper.pdf", pdfs)
-    return isnothing(named) ? first(pdfs) : pdfs[named]
+    isnothing(named) || return pdfs[named]
+
+    author_pdfs = filter(!is_journal_office_upload, pdfs)
+    return isempty(author_pdfs) ? first(pdfs) : first(author_pdfs)
 end
 
 """

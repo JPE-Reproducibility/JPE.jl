@@ -30,6 +30,104 @@ end
     end
 end
 
+@testset "has_any_content" begin
+    mktempdir() do root
+        empty_dir = joinpath(root, "empty")
+        mkpath(empty_dir)
+        @test !JPE.has_any_content(empty_dir)
+        @test !JPE.has_any_content(joinpath(root, "does-not-exist"))
+
+        write(joinpath(empty_dir, "x.txt"), "hi")
+        @test JPE.has_any_content(empty_dir)
+    end
+end
+
+@testset "find_paper_source_round - current round has content, no fallback needed" begin
+    mktempdir() do dbox
+        journal, slug = "JPE", "Test-123"
+        mkpath(joinpath(dbox, journal, slug, "2", "paper-author"))
+        write(joinpath(dbox, journal, slug, "2", "paper-author", "main.tex"), "\\documentclass{article}")
+
+        found = JPE.find_paper_source_round(dbox, journal, slug, 2)
+        @test found.round == 2
+        @test found.subfolder == "paper-author"
+        @test found.dir == joinpath(dbox, journal, slug, "2", "paper-author")
+    end
+end
+
+@testset "find_paper_source_round - falls back to an earlier round when current is empty" begin
+    mktempdir() do dbox
+        journal, slug = "JPE", "Test-456"
+        # round 2: both subfolders exist but empty (the common "author didn't
+        # resubmit the paper" case)
+        mkpath(joinpath(dbox, journal, slug, "2", "paper-author"))
+        mkpath(joinpath(dbox, journal, slug, "2", "paper-appendices"))
+        # round 1: has the real paper, in paper-appendices only
+        mkpath(joinpath(dbox, journal, slug, "1", "paper-appendices"))
+        write(joinpath(dbox, journal, slug, "1", "paper-appendices", "paper.pdf"), "fake pdf")
+
+        found = JPE.find_paper_source_round(dbox, journal, slug, 2)
+        @test found.round == 1
+        @test found.subfolder == "paper-appendices"
+    end
+end
+
+@testset "find_paper_source_round - searches back past multiple empty rounds" begin
+    mktempdir() do dbox
+        journal, slug = "JPE", "Test-789"
+        for round in 1:3
+            mkpath(joinpath(dbox, journal, slug, string(round), "paper-author"))
+            mkpath(joinpath(dbox, journal, slug, string(round), "paper-appendices"))
+        end
+        write(joinpath(dbox, journal, slug, "1", "paper-author", "main.tex"), "\\documentclass{article}")
+
+        found = JPE.find_paper_source_round(dbox, journal, slug, 3)
+        @test found.round == 1
+        @test found.subfolder == "paper-author"
+    end
+end
+
+@testset "find_paper_source_round - nothing anywhere returns nothing" begin
+    mktempdir() do dbox
+        journal, slug = "JPE", "Test-000"
+        mkpath(joinpath(dbox, journal, slug, "1", "paper-author"))
+        mkpath(joinpath(dbox, journal, slug, "1", "paper-appendices"))
+
+        @test isnothing(JPE.find_paper_source_round(dbox, journal, slug, 1))
+    end
+end
+
+@testset "is_journal_office_upload" begin
+    @test JPE.is_journal_office_upload("/some/dir/Connie - 20200631.zip")
+    @test !JPE.is_journal_office_upload("/some/dir/pablo brañas garza - revised ms.pdf")
+end
+
+@testset "find_paper_pdf - prefers author upload over journal-office upload" begin
+    mktempdir() do dir
+        write(joinpath(dir, "Connie - 123.pdf"), "journal office copy")
+        write(joinpath(dir, "author draft.pdf"), "author copy")
+
+        @test JPE.find_paper_pdf(dir) == joinpath(dir, "author draft.pdf")
+    end
+end
+
+@testset "find_paper_pdf - falls back to journal-office upload if it's the only one" begin
+    mktempdir() do dir
+        write(joinpath(dir, "Connie - 123.pdf"), "journal office copy")
+
+        @test JPE.find_paper_pdf(dir) == joinpath(dir, "Connie - 123.pdf")
+    end
+end
+
+@testset "find_paper_pdf - paper.pdf wins over everything, including journal-office naming" begin
+    mktempdir() do dir
+        write(joinpath(dir, "Connie - 123.pdf"), "journal office copy")
+        write(joinpath(dir, "paper.pdf"), "the real one")
+
+        @test JPE.find_paper_pdf(dir) == joinpath(dir, "paper.pdf")
+    end
+end
+
 @testset "find_paper_pdf" begin
     mktempdir() do dir
         @test isnothing(JPE.find_paper_pdf(dir))
@@ -158,6 +256,15 @@ end
         @test occursin("find_paper_pdf(paper_dest_path)", content)
         @test occursin("report-claims-extraction.md", content)
         @test occursin("if true", content)  # do_claims baked in
+
+        # Nested-zip handling for the paper-source fetch (JPE-Reproducibility/
+        # JPE.jl's paper-source-round-fallback fix): catches a future edit
+        # that reverts to a flat copy and silently drops .tex files locked
+        # inside e.g. "Paper + figs + bib.zip".
+        @test occursin("nested paper-source ZIP", content)
+        @test occursin("vars[\"paper_source_dropbox_rel_path\"]", content)
+        # ... and not the old (wrong-round) key for this specific lookup
+        @test !occursin("vars[\"dropbox_rel_path\"], vars[\"paper_source_subfolder\"]", content)
     end
 end
 
