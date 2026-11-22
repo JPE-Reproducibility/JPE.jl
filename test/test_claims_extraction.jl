@@ -30,6 +30,38 @@ end
     end
 end
 
+@testset "find_paper_pdf" begin
+    mktempdir() do dir
+        @test isnothing(JPE.find_paper_pdf(dir))
+
+        write(joinpath(dir, "notes.txt"), "not a pdf")
+        @test isnothing(JPE.find_paper_pdf(dir))
+
+        write(joinpath(dir, "appendix.pdf"), "fake pdf bytes")
+        @test JPE.find_paper_pdf(dir) == joinpath(dir, "appendix.pdf")
+
+        # paper.pdf is preferred over an alphabetically-earlier file
+        write(joinpath(dir, "AAA_cover_letter.pdf"), "fake pdf bytes")
+        write(joinpath(dir, "paper.pdf"), "fake pdf bytes")
+        @test JPE.find_paper_pdf(dir) == joinpath(dir, "paper.pdf")
+    end
+end
+
+@testset "find_paper_pdf - recurses into subfolders" begin
+    mktempdir() do dir
+        subdir = joinpath(dir, "paper-source")
+        mkpath(subdir)
+        write(joinpath(subdir, "main.pdf"), "fake pdf bytes")
+        @test JPE.find_paper_pdf(dir) == joinpath(subdir, "main.pdf")
+    end
+end
+
+@testset "build_extract_pdf_text_script" begin
+    script = JPE.build_extract_pdf_text_script("/some/dir/paper.pdf", "/tmp/out.json")
+    @test occursin("PackageScanner.extract_pdf_text(\"/some/dir/paper.pdf\")", script)
+    @test occursin("/tmp/out.json", script)
+end
+
 @testset "build_extract_paper_text_script" begin
     script_nothing = JPE.build_extract_paper_text_script("/some/dir", "/tmp/out.json")
     @test occursin("PackageScanner.extract_latex_text(\"/some/dir\"; main_files = nothing)", script_nothing)
@@ -113,11 +145,17 @@ end
         # catches a rename in claims_runner_helpers.jl that forgets to update
         # the orchestration block below it
         for name in ("claude_binary", "claude_jpe_config_dir", "CLAIMS_JSON_SCHEMA",
-                     "claims_extraction_prompt", "build_claude_claims_cmd", "run_claude_claims_extraction")
+                     "claims_extraction_prompt", "build_claude_claims_cmd", "run_claude_claims_extraction",
+                     "find_paper_pdf")
             @test occursin(name, content)
         end
 
         @test occursin("PackageScanner.extract_latex_text(paper_dest_path)", content)
+        # PDF fallback (JPE-Reproducibility/PackageScanner.jl extract_pdf_text):
+        # catches a future edit that drops this branch and silently reverts to
+        # "PDF fallback not implemented"
+        @test occursin("PackageScanner.extract_pdf_text(pdf_path)", content)
+        @test occursin("find_paper_pdf(paper_dest_path)", content)
         @test occursin("report-claims-extraction.md", content)
         @test occursin("if true", content)  # do_claims baked in
     end
