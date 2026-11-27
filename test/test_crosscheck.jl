@@ -72,6 +72,7 @@ end
     @test occursin("/tmp/bundle", prompt)
     @test occursin("cannot see line", prompt)
     @test occursin("static plausibility", prompt)
+    @test occursin("readme_review.md", prompt)
 end
 
 @testset "build_crosscheck_cmd - flags and env" begin

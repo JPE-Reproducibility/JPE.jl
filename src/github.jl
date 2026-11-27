@@ -76,6 +76,35 @@ function gh_pull(paper_id; round=nothing)
     return (r,repo_path)
 end
 
+"""
+    gh_commit_and_push_generated!(repo_path::String, message::String) -> Bool
+
+Stage, commit, and push every change under `repo_path`'s `generated/`
+folder -- used after `review_paper_readme`/`build_replicator_checklist`
+(Stage R, the replicator checklist), neither of which auto-commits/pushes
+itself (by design: a human reviews a report before it goes anywhere). By
+the time this is called, that review has already happened; the only
+remaining failure mode is simply forgetting to push, which would leave the
+GitHub link sent to the replicator pointing at nothing. Scoped to
+`generated/` only, not `git add -A`, so it never sweeps up unrelated
+changes elsewhere in the repo.
+
+Returns `true` if something was actually committed and pushed, `false` if
+there was nothing new under `generated/` (not an error -- e.g. re-running
+`assign_replicators` after everything was already pushed).
+"""
+function gh_commit_and_push_generated!(repo_path::String, message::String)
+    run(Cmd(`git add generated/`, dir = repo_path))
+    nothing_staged = success(Cmd(`git diff --cached --quiet`, dir = repo_path))
+    if nothing_staged
+        @info "nothing new under generated/ to commit at $repo_path"
+        return false
+    end
+    run(Cmd(`git commit -m $message`, dir = repo_path))
+    run(Cmd(`git push`, dir = repo_path))
+    return true
+end
+
 function gh_rename_branch(gh_url::String, old::String, new::String)
     cmd = Cmd([
         "gh", "api",

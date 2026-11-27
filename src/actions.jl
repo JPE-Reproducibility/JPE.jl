@@ -98,6 +98,42 @@ function dispatch()
             else
                 println(">>> skipping preprocess for $cid (already done)")
             end
+
+            # Stage R (LLM README review, see readme_review.jl) is a separate paid
+            # `claude` call and deliberately NOT part of preprocess()'s automatic
+            # Stage A-D run -- ask here, right before assigning, so a "yes" means its
+            # output is already on disk by the time assign() builds the replicator
+            # checklist (see build_replicator_checklist) that gets linked in the
+            # assignment email. A "no" or a failure here does not block assignment --
+            # the checklist just degrades gracefully to "(not available)" for Stage R.
+            #
+            # BUT: "gh-runner" preprocess mode is asynchronous -- preprocess() just
+            # pushes a `[trigger remote]` commit and returns immediately, and the
+            # actual replication-package/ fetch happens later on the self-hosted
+            # runner. Stage R needs that package already on the repo branch (it
+            # looks for the README under replication-package/), so only offer the
+            # prompt when preprocessing was synchronous ("local"); for "gh-runner",
+            # just say so -- running Stage R here would just error on a README that
+            # hasn't landed yet.
+            preprocess_mode = let
+                it = db_filter_iteration(r.paper_id, r.round)
+                nrow(it) == 1 ? it[1, :preprocess_mode] : missing
+            end
+
+            if !ismissing(preprocess_mode) && preprocess_mode == "local"
+                println(">>> run Stage R (LLM README review, paid) for $cid before assigning?")
+                readme_review_menu = RadioMenu(["Yes", "No"])
+                if request(readme_review_menu) == 1
+                    try
+                        review_paper_readme(r.paper_id)
+                    catch e
+                        @warn "Stage R README review failed for $cid -- assigning without it" exception = e
+                    end
+                end
+            else
+                @info "preprocess_mode=$(preprocess_mode) for $cid -- skipping the Stage R prompt (gh-runner is async, package isn't on the repo branch yet). Once the workflow finishes (check audit_gh_runner_backlog()), run review_paper_readme(\"$(r.paper_id)\") manually before assigning."
+            end
+
             assign(r.paper_id)  # needs to prompt for which replicator
         else
             println("skipping $cid")
@@ -484,22 +520,36 @@ function assign_replicators(paperID, selection)
     # Get necessary information for email
     download_url = replace(dbox_link_at_path(current_iteration.file_request_path, dbox_token), "dl=0" => "dl=1")
     repo_url = current_iteration.github_url
-    
+
     # Create case ID for email
     paper_row = db_df_where("papers", "paper_id", paperID)[1, :]
     caseID = case_id(paper_row.journal, paper_row.surname_of_author, paperID, current_round)
-    
 
+    # Best-effort: build the deterministic replicator checklist (Stage D/B/R/refine
+    # signal aggregated, see replicator_checklist.jl), commit+push it (and anything
+    # else sitting under generated/ -- e.g. Stage R's report-readme-review.md --
+    # that was generated but never pushed, see gh_commit_and_push_generated!), and
+    # link straight to it on GitHub. A failure anywhere here (e.g. Stage D/R never
+    # ran for this paper) must not block the actual assignment, so it just falls
+    # back to no checklist link -- the email still gets sent either way.
+    checklist_url = try
+        build_replicator_checklist(paperID; round = current_round)
+        repo_path = joinpath(get_dbox_loc(paper_row.journal, paper_row.paper_slug, current_round; full = true), "repo")
+        gh_commit_and_push_generated!(repo_path, "Replicator checklist + generated reports for assignment")
+        "$(repo_url)/blob/round$(current_round)/generated/report-replicator-checklist.md"
+    catch e
+        @warn "could not build/push replicator checklist for $paperID round $current_round -- assigning without it" exception = e
+        nothing
+    end
 
-     
     # Update database entries using robust status update pattern
     update_paper_status(paperID, "author_back_de", "with_replicator") do con
             # Send email
         if !isnothing(secondary_email)
-            gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, 
-                        first2=secondary_name, email2=secondary_email, back=is_subsequent_round)
+            gmail_assign(primary_name, primary_email, caseID, download_url, repo_url,
+                        first2=secondary_name, email2=secondary_email, back=is_subsequent_round, checklist_url=checklist_url)
         else
-            gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, back=is_subsequent_round)
+            gmail_assign(primary_name, primary_email, caseID, download_url, repo_url, back=is_subsequent_round, checklist_url=checklist_url)
         end
         # Update iterations table
         DBInterface.execute(con, """

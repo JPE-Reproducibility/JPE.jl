@@ -28,8 +28,13 @@ crosscheck an earlier round (e.g. round 1 while the paper has since moved to
 round 2).
 
 Requires `claims.json` (Stage C) to already exist in `generated/`; errors if
-not -- run `extract_paper_claims` first. `report-readme-structure.md` (Stage B)
-is optional and degrades gracefully if absent.
+not -- run `extract_paper_claims` first. `report-readme-structure.md` (Stage
+B) and `report-readme-review.md` (Stage R, see `review_paper_readme`) are
+both optional and degrade gracefully if absent -- run Stage R first if you
+want its findings folded into this one's reasoning. Unlike PackageScanner's
+own checks, `report-readme-review.md` is written in full (not
+`cap_report_file!`-truncated, see `review_paper_readme`), so this always
+sees the complete review, not a pointer note.
 
 Does NOT auto-commit/push (matching `write_report`'s convention): this report
 may be sent to authors/the handling editor directly, so a human reviews it
@@ -56,6 +61,8 @@ function run_paper_crosscheck(paperID; round = nothing, force::Bool = false)
           read_or_placeholder(joinpath(gen_dir, "report-data-dependencies.md"), "(not available)"))
     write(joinpath(bundle_dir, "readme_structure.md"),
           read_or_placeholder(joinpath(gen_dir, "report-readme-structure.md"), "(not available)"))
+    write(joinpath(bundle_dir, "readme_review.md"),
+          read_or_placeholder(joinpath(gen_dir, "report-readme-review.md"), "(not available)"))
     write(joinpath(bundle_dir, "code_manifest.txt"),
           read_or_placeholder(joinpath(gen_dir, "program-files-manifest.csv"),
                                read_or_placeholder(joinpath(gen_dir, "program-files.txt"), "(not available)")))
