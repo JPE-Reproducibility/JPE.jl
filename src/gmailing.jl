@@ -4,14 +4,14 @@ JO_email() = haskey(ENV,"JPE_TEST") ? "florian.oswald@unito.it" : "jpe@press.uch
 journal_manager_email() = haskey(ENV,"JPE_TEST") ? "florian.oswald@unito.it" : "cfritsch@uchicago.edu"
 author_email(mail::String) = haskey(ENV,"JPE_TEST") ? "florian.oswald@unito.it" : mail
 
-function gmail_assign(first1,email1,caseID,download_url, repo_url; first2 = nothing,email2 = nothing,back = false)
+function gmail_assign(first1,email1,caseID,download_url, repo_url; first2 = nothing,email2 = nothing,back = false, checklist_url = nothing)
     subject = if back
         "The JPE package $caseID is back"
     else
         "I assigned you the $caseID package"
     end
     to = isnothing(email2) ? [author_email(email1)] : [author_email(email1), author_email(email2)]
-    body = gmail_assign_body(first1,caseID,download_url,repo_url,first2 = first2, back = back)
+    body = gmail_assign_body(first1,caseID,download_url,repo_url,first2 = first2, back = back, checklist_url = checklist_url)
     gmail_send(
         to,
         subject,
@@ -21,11 +21,18 @@ function gmail_assign(first1,email1,caseID,download_url, repo_url; first2 = noth
 end
 
 
-function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothing,back = false)
+function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothing,back = false, checklist_url = nothing)
 
     deadline = Dates.format(today() + Day(10), dateformat"d U Y")
 
     repnames = isnothing(first2) ? first1 : string(first1," and ",first2)
+
+    checklist_row = isnothing(checklist_url) ? "" : """
+        <tr>
+            <td width="20%">Replicator Checklist</td>
+            <td>$(checklist_url)</td>
+        </tr>
+    """
 
     m1 = if !back
         """
@@ -62,6 +69,7 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
             <td width="20%">Deadline</td>
             <td>$(deadline)</td>
         </tr>
+        $(checklist_row)
         </table>
         """
     else
@@ -99,16 +107,23 @@ function gmail_assign_body(first1,caseID,download_url, repo_url; first2 = nothin
             <td width="20%">Deadline</td>
             <td>$(deadline)</td>
         </tr>
+        $(checklist_row)
         </table>
         """
     end
-        
+
+    checklist_note = isnothing(checklist_url) ? "" : """
+        <br>
+        I also generated a <a href="$(checklist_url)">replicator checklist</a> summarizing what our automated checks (README review, claims-vs-package crosscheck, referee review) flagged for this paper. It's only meant to help you get started faster -- it is <b>not</b> a substitute for your own review, and please don't just copy-paste its contents into your report.
+        <br>
+    """
+
     m2 = """
 
       
         <br>
         Go to the git repo and look at the readme, which contains step by step instructions.
-
+        $(checklist_note)
         <h2>Report Submission 🗒️</h2>
 
         <ol>

@@ -16,8 +16,11 @@
 #
 # Reads Stage A (report-data-dependencies.md), Stage B (report-readme-structure.md
 # -- optional, degrades gracefully if absent: JPE-Reproducibility/PackageScanner.jl#17
-# not yet merged at the time this was written), and Stage C (claims.json) outputs
-# from the paper's generated/ folder, and runs a single headless `claude -p` call
+# not yet merged at the time this was written), Stage R (report-readme-review.md --
+# also optional/degrades gracefully, the qualitative LLM README review in
+# readme_review.jl, a DE-triggered manual step like this one, not run automatically),
+# and Stage C (claims.json) outputs from the paper's generated/ folder, and runs a
+# single headless `claude -p` call
 # (same budget discipline as Stage C: --safe-mode, single turn, no agentic Read/Grep
 # loop) to produce a per-claim verdict (Matched/Plausible/Missing) with file-level
 # supporting evidence.
@@ -87,6 +90,13 @@ function crosscheck_prompt(bundle_dir::String)
     - readme_structure.md: README section checklist and data citation coverage (Stage B).
       If this says "(not available)", Stage B wasn't run for this package -- proceed
       without it, don't penalize claims for its absence.
+    - readme_review.md: a qualitative LLM review of the README against a data-editor
+      checklist (Stage R) -- e.g. it may note that a data source's access/license
+      details are missing or vague. If this says "(not available)", Stage R wasn't
+      run for this package -- proceed without it, don't penalize claims for its
+      absence. Use it as supporting context for a claim's plausibility (e.g. a claim
+      about a data source Stage R flagged as undocumented is weaker evidence either
+      way), not as a new source of verdicts on its own.
     - code_manifest.txt / data_manifest.txt: file listings of the replication package.
 
     For each claim in claims.json (each data source, table, and figure), assess

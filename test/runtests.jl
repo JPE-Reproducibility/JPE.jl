@@ -40,4 +40,6 @@ end
     include("test_claims_extraction.jl")
     include("test_crosscheck.jl")
     include("test_report_capping.jl")
+    include("test_readme_review.jl")
+    include("test_replicator_checklist.jl")
 end

@@ -1,3 +1,27 @@
+@testset "gmail_assign_body - no checklist_url, no checklist section at all" begin
+    body = JPE.gmail_assign_body("Jane", "TEST-CASEID", "https://dropbox.com/download", "https://github.com/org/repo")
+    @test occursin("Jane", body)
+    @test occursin("TEST-CASEID", body)
+    @test !occursin("Replicator Checklist", body)
+    @test !occursin("copy-paste", body)
+end
+
+@testset "gmail_assign_body - with checklist_url, link and caveat both present" begin
+    checklist_url = "https://github.com/org/repo/blob/round1/generated/report-replicator-checklist.md"
+    body = JPE.gmail_assign_body("Jane", "TEST-CASEID", "https://dropbox.com/download", "https://github.com/org/repo"; checklist_url = checklist_url)
+    @test occursin("Replicator Checklist", body)
+    @test occursin(checklist_url, body)
+    @test occursin("copy-paste", body)
+    @test occursin("substitute for your own review", body)
+end
+
+@testset "gmail_assign_body - back=true still includes checklist row when given" begin
+    checklist_url = "https://github.com/org/repo/blob/round2/generated/report-replicator-checklist.md"
+    body = JPE.gmail_assign_body("Jane", "TEST-CASEID", "https://dropbox.com/download", "https://github.com/org/repo"; back = true, checklist_url = checklist_url)
+    @test occursin("is back for the next round", body)
+    @test occursin(checklist_url, body)
+end
+
 @testset "gmail_remote_replication" begin
 
     body = JPE.gmail_remote_replication_body(

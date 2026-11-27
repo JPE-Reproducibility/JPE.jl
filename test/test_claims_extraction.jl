@@ -42,6 +42,68 @@ end
     end
 end
 
+@testset "unzip_nested_paper_source - no zips, returns dir unchanged" begin
+    mktempdir() do dir
+        write(joinpath(dir, "main.tex"), "\\documentclass{article}")
+        @test JPE.unzip_nested_paper_source(dir) == dir
+    end
+end
+
+@testset "unzip_nested_paper_source - extracts top-level zip" begin
+    mktempdir() do dir
+        src = joinpath(dir, "src")
+        mkpath(src)
+        write(joinpath(src, "main.tex"), "\\documentclass{article}")
+        zippath = joinpath(dir, "paper.zip")
+        run(`zip -jq $zippath $(joinpath(src, "main.tex"))`)
+
+        appendices_dir = joinpath(dir, "paper-appendices")
+        mkpath(appendices_dir)
+        cp(zippath, joinpath(appendices_dir, "paper.zip"))
+
+        extracted = JPE.unzip_nested_paper_source(appendices_dir)
+        @test extracted != appendices_dir
+        @test isfile(joinpath(extracted, "main.tex"))
+    end
+end
+
+@testset "resolve_main_files - absolute path passes through" begin
+    mktempdir() do dir
+        f = joinpath(dir, "main.tex")
+        write(f, "\\documentclass{article}")
+        @test JPE.resolve_main_files(dir, [f]) == [f]
+    end
+end
+
+@testset "resolve_main_files - resolves bare filename against dir" begin
+    mktempdir() do dir
+        sub = joinpath(dir, "Paper TEX file")
+        mkpath(sub)
+        write(joinpath(sub, "Paper.tex"), "\\documentclass{article}")
+        write(joinpath(sub, "Appendix.tex"), "\\documentclass{article}")
+
+        resolved = JPE.resolve_main_files(dir, ["Paper.tex", "Appendix.tex"])
+        @test resolved == [joinpath(sub, "Paper.tex"), joinpath(sub, "Appendix.tex")]
+    end
+end
+
+@testset "resolve_main_files - errors on no match" begin
+    mktempdir() do dir
+        @test_throws ErrorException JPE.resolve_main_files(dir, ["Nonexistent.tex"])
+    end
+end
+
+@testset "resolve_main_files - errors on ambiguous match" begin
+    mktempdir() do dir
+        mkpath(joinpath(dir, "a"))
+        mkpath(joinpath(dir, "b"))
+        write(joinpath(dir, "a", "main.tex"), "\\documentclass{article}")
+        write(joinpath(dir, "b", "main.tex"), "\\documentclass{article}")
+
+        @test_throws ErrorException JPE.resolve_main_files(dir, ["main.tex"])
+    end
+end
+
 @testset "find_paper_source_round - current round has content, no fallback needed" begin
     mktempdir() do dbox
         journal, slug = "JPE", "Test-123"

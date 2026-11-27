@@ -62,7 +62,7 @@ a zip that still needs unpacking (see the nested-zip handling in
 Returns `(dir, round, subfolder)` for the first round with content found,
 or `nothing` if no round from `current_round` down to 1 has anything.
 """
-function find_paper_source_round(dbox_apps_root::String, journal::String, paper_slug::String, current_round::Int)
+function find_paper_source_round(dbox_apps_root::String, journal::String, paper_slug::String, current_round::Integer)
     for round in current_round:-1:1
         author_dir = joinpath(dbox_apps_root, journal, paper_slug, string(round), "paper-author")
         appendices_dir = joinpath(dbox_apps_root, journal, paper_slug, string(round), "paper-appendices")
@@ -177,6 +177,71 @@ function extract_paper_pdf_text(pdf_path::String)
 end
 
 """
+    unzip_nested_paper_source(src_dir::String) -> String
+
+Authors often upload the paper source as a top-level ZIP (e.g. "Paper TEX
+file.zip") rather than loose files, sometimes alongside an unrelated ZIP of
+PDFs from a different uploader. `find_paper_source_dir`/`extract_paper_text`
+only look at files actually sitting in `src_dir`, so an unexpanded ZIP looks
+like an empty paper source to them.
+
+Mirrors the nested-ZIP handling in `write_runner_script` (preprocess.jl):
+copies everything else into a fresh temp dir, then unzips every top-level
+`.zip` into it. Returns `src_dir` unchanged if it has no top-level ZIPs.
+"""
+function unzip_nested_paper_source(src_dir::String)
+    isdir(src_dir) || return src_dir
+    zips = filter(f -> isfile(f) && endswith(lowercase(f), ".zip"), readdir(src_dir; join = true))
+    isempty(zips) && return src_dir
+
+    dest = mktempdir()
+    for f in readdir(src_dir; join = true)
+        endswith(lowercase(f), ".zip") || cp(f, joinpath(dest, basename(f)); force = true)
+    end
+    for z in zips
+        try
+            run(`unzip -oq $z -d $dest`)
+        catch e
+            @warn "unzip of $z exited non-zero (may still be okay)" exception = e
+        end
+    end
+    return dest
+end
+
+"""
+    resolve_main_files(dir::String, main_files::Vector{String}) -> Vector{String}
+
+`extract_paper_claims`'s documented recovery flow asks the caller to re-run
+with `main_files=[...]` after seeing an "ambiguous" warning. Since
+`unzip_nested_paper_source` extracts into a fresh `mktempdir()` on every
+call, any absolute path reported by one call is already gone by the next --
+so this resolves each entry of `main_files` against the *current* call's
+`dir` instead of requiring the caller to guess next call's temp path.
+
+Each entry may be an existing absolute path (used as-is) or a bare filename
+/ relative suffix (e.g. `"Paper.tex"`, `"src/Paper.tex"`), resolved by
+searching `dir` for a file whose path ends with it. Errors if an entry
+matches zero or more than one file.
+"""
+function resolve_main_files(dir::String, main_files::Vector{String})
+    isdir(dir) || error("paper source dir $dir does not exist")
+    resolved = String[]
+    for mf in main_files
+        if isfile(mf)
+            push!(resolved, mf)
+            continue
+        end
+        candidates = [joinpath(root, f) for (root, _, files) in walkdir(dir) for f in files
+                      if f == mf || endswith(joinpath(root, f), "/" * mf)]
+        unique!(candidates)
+        isempty(candidates) && error("main_files entry \"$mf\" not found under $dir")
+        length(candidates) > 1 && error("main_files entry \"$mf\" matched multiple files under $dir: $candidates")
+        push!(resolved, candidates[1])
+    end
+    return resolved
+end
+
+"""
     extract_paper_claims(paperID; round = nothing, out_dir, force = false, main_files = nothing)
 
 Stage C claims extraction: locate the paper's LaTeX source (preferring
@@ -191,6 +256,12 @@ prompts interactively for which to use, re-resolves, and proceeds. If no
 `.tex` source is found at all, falls back to a PDF under `dir` (see
 `find_paper_pdf`/`extract_paper_pdf_text`) if one exists; warns and returns
 `nothing` only if neither a `.tex` nor a `.pdf` source can be found.
+
+`main_files`, if given, may be bare filenames (e.g. `"Paper.tex"`) rather
+than absolute paths -- they're resolved against the freshly-unzipped `dir`
+by `resolve_main_files` before use, since the paper source may live inside
+a ZIP extracted to a new temp dir on every call (see
+`unzip_nested_paper_source`).
 """
 function extract_paper_claims(paperID; round = nothing, out_dir::String, force::Bool = false,
                                main_files::Union{Nothing,Vector{String}} = nothing)
@@ -208,10 +279,11 @@ function extract_paper_claims(paperID; round = nothing, out_dir::String, force::
     nrow(it) == 1 || error("no iteration found for $paperID round $round")
     r = it[1, :]
 
-    author_dir = string(ENV["JPE_DBOX_APPS"], r.paper_source_path)
-    appendices_dir = string(ENV["JPE_DBOX_APPS"], r.paper_path)
+    author_dir = unzip_nested_paper_source(string(ENV["JPE_DBOX_APPS"], r.paper_source_path))
+    appendices_dir = unzip_nested_paper_source(string(ENV["JPE_DBOX_APPS"], r.paper_path))
     dir = find_paper_source_dir(author_dir, appendices_dir)
 
+    main_files = isnothing(main_files) ? nothing : resolve_main_files(dir, main_files)
     result = extract_paper_text(dir; main_files = main_files)
 
     if result.ambiguous
