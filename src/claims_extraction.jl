@@ -10,12 +10,13 @@
 # no ANTHROPIC_API_KEY) for the actual extraction call.
 #
 # The actual claude-CLI-calling helpers (schema, prompt, cmd builder, runner)
-# live in claims_runner_helpers.jl, included separately: that file's source
-# is also spliced verbatim into the generated runner_precheck.jl script (see
-# write_runner_script in preprocess.jl, JPE-Reproducibility/JPE.jl#34) so
-# Stage C can run wherever that script executes, not just from a JPE.jl
-# session. Everything below is JPE.jl-local only (DB access, interactive
-# disambiguation) and is not part of that splice.
+# live in PackageScanner.jl (`run_claude_claims_extraction`, `find_paper_pdf`,
+# etc. -- see JPE-Reproducibility/PackageScanner.jl#21 and this repo's #54):
+# ported there from this file's former `claims_runner_helpers.jl` sibling so
+# both JPE.jl and the generated runner_precheck.jl script (see
+# write_runner_script in preprocess.jl, JPE-Reproducibility/JPE.jl#34) call
+# the same real functions instead of splicing source text. Everything below
+# is JPE.jl-local only (DB access, interactive disambiguation).
 
 """
     find_paper_source_dir(author_dir::String, appendices_dir::String)
@@ -189,8 +190,9 @@ to avoid re-spending on an unchanged paper).
 If LaTeX source discovery is ambiguous (multiple candidate main files),
 prompts interactively for which to use, re-resolves, and proceeds. If no
 `.tex` source is found at all, falls back to a PDF under `dir` (see
-`find_paper_pdf`/`extract_paper_pdf_text`) if one exists; warns and returns
-`nothing` only if neither a `.tex` nor a `.pdf` source can be found.
+`PackageScanner.find_paper_pdf`/`extract_paper_pdf_text`) if one exists;
+warns and returns `nothing` only if neither a `.tex` nor a `.pdf` source
+can be found.
 """
 function extract_paper_claims(paperID; round = nothing, out_dir::String, force::Bool = false,
                                main_files::Union{Nothing,Vector{String}} = nothing)
@@ -234,7 +236,7 @@ function extract_paper_claims(paperID; round = nothing, out_dir::String, force::
     end
 
     if isempty(result.roots)
-        pdf_path = find_paper_pdf(dir)
+        pdf_path = PackageScanner.find_paper_pdf(dir)
         if isnothing(pdf_path)
             @warn "no .tex or .pdf source found for $paperID round $round under $dir -- skipping claims extraction"
             return nothing
@@ -247,7 +249,7 @@ function extract_paper_claims(paperID; round = nothing, out_dir::String, force::
     text_path = joinpath(tempdir(), "$(paperID)-$(round)-flattened.tex")
     write(text_path, result.text)
 
-    extraction = run_claude_claims_extraction(text_path)
+    extraction = PackageScanner.run_claude_claims_extraction(text_path)
     @info "claims extraction cost for $paperID round $round: \$$(extraction.cost_usd)"
 
     open(claims_path, "w") do io

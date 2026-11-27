@@ -2,14 +2,17 @@
 # Stage D: DB-backed manual/force-rerun entry point (JPE-Reproducibility/JPE.jl#29).
 #
 # The functions this builds on (prompt, schema, `claude -p` invocation,
-# coverage scoring, report rendering) live in crosscheck_runner_helpers.jl --
-# they're self-contained there so that same source can be spliced into the
-# generated runner_precheck.jl script (see write_runner_script in
-# preprocess.jl) and run Stage D automatically, right after Stage C, in
-# either local or gh-runner mode. `run_paper_crosscheck` here is only for a
-# DE-triggered manual rerun after the fact (e.g. `force=true` to redo a
-# round whose Stage D already ran, or to crosscheck a round the automatic
-# pass skipped) -- it is NOT on the normal preprocess() path.
+# coverage scoring, report rendering) live in PackageScanner.jl
+# (`run_claude_crosscheck`, `compute_coverage`, `render_crosscheck_report`,
+# `read_or_placeholder` -- see JPE-Reproducibility/PackageScanner.jl#21 and
+# this repo's #54): ported there from this file's former
+# `crosscheck_runner_helpers.jl` sibling so both JPE.jl and the generated
+# runner_precheck.jl script (see write_runner_script in preprocess.jl) call
+# the same real functions, right after Stage C, in either local or
+# gh-runner mode. `run_paper_crosscheck` here is only for a DE-triggered
+# manual rerun after the fact (e.g. `force=true` to redo a round whose
+# Stage D already ran, or to crosscheck a round the automatic pass skipped)
+# -- it is NOT on the normal preprocess() path.
 
 """
     run_paper_crosscheck(paperID; round = nothing, force = false)
@@ -53,27 +56,27 @@ function run_paper_crosscheck(paperID; round = nothing, force::Bool = false)
     bundle_dir = mktempdir()
     cp(claims_path, joinpath(bundle_dir, "claims.json"))
     write(joinpath(bundle_dir, "data_dependencies.md"),
-          read_or_placeholder(joinpath(gen_dir, "report-data-dependencies.md"), "(not available)"))
+          PackageScanner.read_or_placeholder(joinpath(gen_dir, "report-data-dependencies.md"), "(not available)"))
     write(joinpath(bundle_dir, "readme_structure.md"),
-          read_or_placeholder(joinpath(gen_dir, "report-readme-structure.md"), "(not available)"))
+          PackageScanner.read_or_placeholder(joinpath(gen_dir, "report-readme-structure.md"), "(not available)"))
     write(joinpath(bundle_dir, "code_manifest.txt"),
-          read_or_placeholder(joinpath(gen_dir, "program-files-manifest.csv"),
-                               read_or_placeholder(joinpath(gen_dir, "program-files.txt"), "(not available)")))
+          PackageScanner.read_or_placeholder(joinpath(gen_dir, "program-files-manifest.csv"),
+                               PackageScanner.read_or_placeholder(joinpath(gen_dir, "program-files.txt"), "(not available)")))
     write(joinpath(bundle_dir, "data_manifest.txt"),
-          read_or_placeholder(joinpath(gen_dir, "data-files-manifest.csv"), "(not available)"))
+          PackageScanner.read_or_placeholder(joinpath(gen_dir, "data-files-manifest.csv"), "(not available)"))
 
-    extraction = run_claude_crosscheck(bundle_dir)
+    extraction = PackageScanner.run_claude_crosscheck(bundle_dir)
     @info "crosscheck cost for $paperID round $use_round: \$$(extraction.cost_usd)"
 
     verdicts = extraction.result["verdicts"]
     orphan_code_files = extraction.result["orphan_code_files"]
-    coverage = compute_coverage(verdicts)
+    coverage = PackageScanner.compute_coverage(verdicts)
 
     mkpath(gen_dir)
     open(crosscheck_path, "w") do io
         JSON.print(io, Dict("verdicts" => verdicts, "coverage" => coverage, "orphan_code_files" => orphan_code_files), 2)
     end
-    write(report_path, render_crosscheck_report(verdicts, coverage, orphan_code_files))
+    write(report_path, PackageScanner.render_crosscheck_report(verdicts, coverage, orphan_code_files))
 
     rm(bundle_dir, recursive = true, force = true)
 
