@@ -97,63 +97,6 @@ end
     end
 end
 
-@testset "is_journal_office_upload" begin
-    @test JPE.is_journal_office_upload("/some/dir/Connie - 20200631.zip")
-    @test !JPE.is_journal_office_upload("/some/dir/pablo brañas garza - revised ms.pdf")
-end
-
-@testset "find_paper_pdf - prefers author upload over journal-office upload" begin
-    mktempdir() do dir
-        write(joinpath(dir, "Connie - 123.pdf"), "journal office copy")
-        write(joinpath(dir, "author draft.pdf"), "author copy")
-
-        @test JPE.find_paper_pdf(dir) == joinpath(dir, "author draft.pdf")
-    end
-end
-
-@testset "find_paper_pdf - falls back to journal-office upload if it's the only one" begin
-    mktempdir() do dir
-        write(joinpath(dir, "Connie - 123.pdf"), "journal office copy")
-
-        @test JPE.find_paper_pdf(dir) == joinpath(dir, "Connie - 123.pdf")
-    end
-end
-
-@testset "find_paper_pdf - paper.pdf wins over everything, including journal-office naming" begin
-    mktempdir() do dir
-        write(joinpath(dir, "Connie - 123.pdf"), "journal office copy")
-        write(joinpath(dir, "paper.pdf"), "the real one")
-
-        @test JPE.find_paper_pdf(dir) == joinpath(dir, "paper.pdf")
-    end
-end
-
-@testset "find_paper_pdf" begin
-    mktempdir() do dir
-        @test isnothing(JPE.find_paper_pdf(dir))
-
-        write(joinpath(dir, "notes.txt"), "not a pdf")
-        @test isnothing(JPE.find_paper_pdf(dir))
-
-        write(joinpath(dir, "appendix.pdf"), "fake pdf bytes")
-        @test JPE.find_paper_pdf(dir) == joinpath(dir, "appendix.pdf")
-
-        # paper.pdf is preferred over an alphabetically-earlier file
-        write(joinpath(dir, "AAA_cover_letter.pdf"), "fake pdf bytes")
-        write(joinpath(dir, "paper.pdf"), "fake pdf bytes")
-        @test JPE.find_paper_pdf(dir) == joinpath(dir, "paper.pdf")
-    end
-end
-
-@testset "find_paper_pdf - recurses into subfolders" begin
-    mktempdir() do dir
-        subdir = joinpath(dir, "paper-source")
-        mkpath(subdir)
-        write(joinpath(subdir, "main.pdf"), "fake pdf bytes")
-        @test JPE.find_paper_pdf(dir) == joinpath(subdir, "main.pdf")
-    end
-end
-
 @testset "build_extract_pdf_text_script" begin
     script = JPE.build_extract_pdf_text_script("/some/dir/paper.pdf", "/tmp/out.json")
     @test occursin("PackageScanner.extract_pdf_text(\"/some/dir/paper.pdf\")", script)
@@ -167,51 +110,6 @@ end
     script_main_files = JPE.build_extract_paper_text_script("/some/dir", "/tmp/out.json";
                                                               main_files = ["/some/dir/a.tex", "/some/dir/b.tex"])
     @test occursin("main_files = [\"/some/dir/a.tex\",\"/some/dir/b.tex\"]", script_main_files)
-end
-
-@testset "claims_extraction_prompt - references the given path" begin
-    prompt = JPE.claims_extraction_prompt("/tmp/flattened.tex")
-    @test occursin("/tmp/flattened.tex", prompt)
-    @test occursin("no code execution", prompt)
-    @test occursin("Resolve cross-references", prompt)
-    @test occursin("Skip purely conceptual figures", prompt)
-end
-
-@testset "CLAIMS_JSON_SCHEMA - parses and has the expected fields" begin
-    schema = JSON.parse(JPE.CLAIMS_JSON_SCHEMA)
-    @test Set(keys(schema["properties"])) == Set(["data_sources", "data_processing_steps", "tables", "figures"])
-
-    table_props = schema["properties"]["tables"]["items"]["properties"]
-    @test haskey(table_props, "controls")
-    @test haskey(table_props, "key_regressors")
-
-    dps_props = schema["properties"]["data_processing_steps"]["items"]["properties"]
-    @test Set(keys(dps_props)) == Set(["description", "variables_involved"])
-end
-
-@testset "claude_jpe_config_dir - respects env, falls back to ~/.claude-jpe" begin
-    withenv("CLAUDE_CONFIG_DIR" => nothing) do
-        @test JPE.claude_jpe_config_dir() == joinpath(homedir(), ".claude-jpe")
-    end
-    withenv("CLAUDE_CONFIG_DIR" => "/custom/dir") do
-        @test JPE.claude_jpe_config_dir() == "/custom/dir"
-    end
-end
-
-@testset "build_claude_claims_cmd - flags and env" begin
-    withenv("CLAUDE_CONFIG_DIR" => "/custom/claude-config") do
-        cmd = JPE.build_claude_claims_cmd("/tmp/flattened.tex"; effort = "medium")
-        cmd_str = string(cmd)
-        @test occursin("--safe-mode", cmd_str)
-        @test occursin("--tools", cmd_str)
-        @test occursin("Read", cmd_str)
-        @test occursin("--json-schema", cmd_str)
-        @test occursin("--effort", cmd_str)
-        @test occursin("medium", cmd_str)
-        @test occursin("CLAUDE_CONFIG_DIR=/custom/claude-config", cmd_str)
-        @test occursin("--add-dir", cmd_str)
-        @test occursin("/tmp", cmd_str)
-    end
 end
 
 @testset "extract_paper_claims - cache hit returns parsed claims.json without re-running" begin
@@ -228,32 +126,32 @@ end
     end
 end
 
-@testset "write_runner_script - Stage C splice parses and wires in the helpers" begin
+@testset "write_runner_script - Stage C splice parses and wires in PackageScanner calls" begin
     mktempdir() do repoloc
         JPE.write_runner_script(repoloc, ["__MACOSX", "renv"]; run_checks = true, do_claims = true)
         content = read(joinpath(repoloc, "runner_precheck.jl"), String)
 
-        # must be valid, complete Julia (a rename in claims_runner_helpers.jl
-        # that leaves a stale call site here would otherwise only be caught
-        # on the runner, mid-run)
+        # must be valid, complete Julia (a rename in PackageScanner.jl's
+        # claims_extraction.jl that leaves a stale call site here would
+        # otherwise only be caught on the runner, mid-run)
         parsed = Meta.parseall(content)
         @test !(parsed isa Expr && parsed.head == :incomplete)
 
-        # the helper functions this block calls must actually be present --
-        # catches a rename in claims_runner_helpers.jl that forgets to update
-        # the orchestration block below it
-        for name in ("claude_binary", "claude_jpe_config_dir", "CLAIMS_JSON_SCHEMA",
-                     "claims_extraction_prompt", "build_claude_claims_cmd", "run_claude_claims_extraction",
-                     "find_paper_pdf")
-            @test occursin(name, content)
-        end
+        @test occursin("using PackageScanner", content)
+
+        # the PackageScanner functions this block calls must actually be
+        # referenced by their qualified name -- catches a rename in
+        # PackageScanner.jl that forgets to update the orchestration block
+        # below it (JPE-Reproducibility/PackageScanner.jl#21, this repo's #54:
+        # these used to be spliced-in source text, now real package calls)
+        @test occursin("PackageScanner.run_claude_claims_extraction", content)
+        @test occursin("PackageScanner.find_paper_pdf(paper_dest_path)", content)
 
         @test occursin("PackageScanner.extract_latex_text(paper_dest_path)", content)
         # PDF fallback (JPE-Reproducibility/PackageScanner.jl extract_pdf_text):
         # catches a future edit that drops this branch and silently reverts to
         # "PDF fallback not implemented"
         @test occursin("PackageScanner.extract_pdf_text(pdf_path)", content)
-        @test occursin("find_paper_pdf(paper_dest_path)", content)
         @test occursin("report-claims-extraction.md", content)
         @test occursin("if true", content)  # do_claims baked in
 
@@ -278,7 +176,7 @@ end
     end
 end
 
-@testset "write_runner_script - Stage D splice parses and wires in the helpers" begin
+@testset "write_runner_script - Stage D splice parses and wires in PackageScanner calls" begin
     mktempdir() do repoloc
         JPE.write_runner_script(repoloc, ["__MACOSX", "renv"]; run_checks = true, do_claims = true, do_crosscheck = true)
         content = read(joinpath(repoloc, "runner_precheck.jl"), String)
@@ -286,9 +184,8 @@ end
         parsed = Meta.parseall(content)
         @test !(parsed isa Expr && parsed.head == :incomplete)
 
-        for name in ("CROSSCHECK_JSON_SCHEMA", "crosscheck_prompt", "build_crosscheck_cmd",
-                     "run_claude_crosscheck", "compute_coverage", "render_crosscheck_report",
-                     "read_or_placeholder")
+        for name in ("PackageScanner.run_claude_crosscheck", "PackageScanner.compute_coverage",
+                     "PackageScanner.render_crosscheck_report", "PackageScanner.read_or_placeholder")
             @test occursin(name, content)
         end
 
@@ -303,8 +200,7 @@ end
         content = read(joinpath(repoloc, "runner_precheck.jl"), String)
         parsed = Meta.parseall(content)
         @test !(parsed isa Expr && parsed.head == :incomplete)
-        # Stage D helpers are always spliced in (harmless if unused), but the
-        # orchestration block itself must be gated off by default.
+        # the orchestration block itself must be gated off by default.
         @test occursin("if false", content)
     end
 end

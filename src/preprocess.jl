@@ -439,7 +439,7 @@ ambiguous `.tex` source (multiple candidate roots) means "skip and write
 generated/report-claims-extraction.md explaining why" (no interactive
 disambiguation is possible in an unattended script -- same reasoning as the
 rest of this unattended run); no `.tex` source at all falls back to a PDF
-under `paper-source/` (`find_paper_pdf`/`PackageScanner.extract_pdf_text`),
+under `paper-source/` (`PackageScanner.find_paper_pdf`/`PackageScanner.extract_pdf_text`),
 and only skips if neither a `.tex` nor a `.pdf` source can be found.
 
 If `do_crosscheck` is true, the script also runs Stage D crosscheck
@@ -458,8 +458,6 @@ PROPOSAL.md for the full spec.
 """
 function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_checks::Bool = true, do_claims::Bool = false,
                               do_crosscheck::Bool = false)
-    claims_helpers_src = read(joinpath(@__DIR__, "claims_runner_helpers.jl"), String)
-    crosscheck_helpers_src = read(joinpath(@__DIR__, "crosscheck_runner_helpers.jl"), String)
     report_capping_helpers_src = read(joinpath(@__DIR__, "report_capping_helpers.jl"), String)
     open(joinpath(repoloc, "runner_precheck.jl"), "w") do io
         write(io, """
@@ -683,22 +681,18 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
             @info "✓ Paper source unzip complete"
         end
 
-        # ── Stage C: LLM claims extraction (JPE-Reproducibility/JPE.jl#34) ────
-        # Shared helpers (claude CLI invocation, prompt, JSON schema) are
-        # spliced in verbatim from claims_runner_helpers.jl -- see JPE.jl's
-        # write_runner_script for the single source of truth.
-        $(claims_helpers_src)
+        # ── Stage C/D: LLM claims extraction + crosscheck (JPE-Reproducibility/JPE.jl#34/#38) ──
+        # Claude CLI invocation, prompts, JSON schemas, and coverage scoring
+        # all live in PackageScanner.jl now (run_claude_claims_extraction,
+        # find_paper_pdf, run_claude_crosscheck, compute_coverage,
+        # render_crosscheck_report, read_or_placeholder -- see
+        # JPE-Reproducibility/PackageScanner.jl#21 and this repo's #54),
+        # called below via the `using PackageScanner` at the top of this
+        # generated script. Previously spliced in verbatim as source text
+        # from claims_runner_helpers.jl/crosscheck_runner_helpers.jl.
 
-        # ── Stage D: claims-vs-package crosscheck (JPE-Reproducibility/JPE.jl#38) ──
-        # Shared helpers spliced in verbatim from crosscheck_runner_helpers.jl,
-        # same reasoning as Stage C above. Only the prompt/schema/cmd/scoring
-        # functions are defined here -- the actual Stage D run happens below,
-        # after Stage A has produced report-data-dependencies.md.
-        $(crosscheck_helpers_src)
-
-        # Shared helpers spliced in verbatim from report_capping_helpers.jl,
-        # same reasoning as Stage C/D above -- used below by the "Cap oversized
-        # generated report files" step.
+        # Shared helpers spliced in verbatim from report_capping_helpers.jl --
+        # used below by the "Cap oversized generated report files" step.
         $(report_capping_helpers_src)
 
         if $(do_claims)
@@ -733,8 +727,8 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                     end
                 else
                     # No .tex root at all -> fall back to a PDF under
-                    # paper-source/ (find_paper_pdf, spliced in above from
-                    # claims_runner_helpers.jl) before giving up entirely.
+                    # paper-source/ (PackageScanner.find_paper_pdf) before
+                    # giving up entirely.
                     #
                     # paper_source_round (preprocess()'s find_paper_source_round
                     # fallback -- most papers don't resubmit the paper itself on
@@ -747,7 +741,7 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                     source_result, source_note = if !isempty(tex_result.roots)
                         tex_result, "LaTeX source (\$(length(tex_result.roots)) root file(s)\$round_note)"
                     else
-                        pdf_path = find_paper_pdf(paper_dest_path)
+                        pdf_path = PackageScanner.find_paper_pdf(paper_dest_path)
                         isnothing(pdf_path) ?
                             (nothing, nothing) :
                             (PackageScanner.extract_pdf_text(pdf_path), "PDF fallback (`\$pdf_path`, no .tex source found\$round_note)")
@@ -764,7 +758,7 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                         flattened_path = joinpath(paper_dest_path, "_flattened.tex")
                         write(flattened_path, source_result.text)
                         try
-                            extraction = run_claude_claims_extraction(flattened_path)
+                            extraction = PackageScanner.run_claude_claims_extraction(flattened_path)
                             open(claims_json_path, "w") do jio
                                 JSON.print(jio, extraction.claims, 2)
                             end
@@ -876,25 +870,25 @@ function write_runner_script(repoloc::String, no_data_scan::Vector{String}; run_
                     try
                         cp(crosscheck_claims_path, joinpath(bundle_dir, "claims.json"))
                         write(joinpath(bundle_dir, "data_dependencies.md"),
-                              read_or_placeholder(joinpath(gen_dir, "report-data-dependencies.md"), "(not available)"))
+                              PackageScanner.read_or_placeholder(joinpath(gen_dir, "report-data-dependencies.md"), "(not available)"))
                         write(joinpath(bundle_dir, "readme_structure.md"),
-                              read_or_placeholder(joinpath(gen_dir, "report-readme-structure.md"), "(not available)"))
+                              PackageScanner.read_or_placeholder(joinpath(gen_dir, "report-readme-structure.md"), "(not available)"))
                         write(joinpath(bundle_dir, "code_manifest.txt"),
-                              read_or_placeholder(joinpath(gen_dir, "program-files-manifest.csv"),
-                                                   read_or_placeholder(joinpath(gen_dir, "program-files.txt"), "(not available)")))
+                              PackageScanner.read_or_placeholder(joinpath(gen_dir, "program-files-manifest.csv"),
+                                                   PackageScanner.read_or_placeholder(joinpath(gen_dir, "program-files.txt"), "(not available)")))
                         write(joinpath(bundle_dir, "data_manifest.txt"),
-                              read_or_placeholder(joinpath(gen_dir, "data-files-manifest.csv"), "(not available)"))
+                              PackageScanner.read_or_placeholder(joinpath(gen_dir, "data-files-manifest.csv"), "(not available)"))
 
-                        extraction = run_claude_crosscheck(bundle_dir)
+                        extraction = PackageScanner.run_claude_crosscheck(bundle_dir)
                         verdicts = extraction.result["verdicts"]
                         orphan_code_files = extraction.result["orphan_code_files"]
-                        coverage = compute_coverage(verdicts)
+                        coverage = PackageScanner.compute_coverage(verdicts)
 
                         open(crosscheck_json_path, "w") do jio
                             JSON.print(jio, Dict("verdicts" => verdicts, "coverage" => coverage,
                                                   "orphan_code_files" => orphan_code_files), 2)
                         end
-                        write(crosscheck_report_path, render_crosscheck_report(verdicts, coverage, orphan_code_files))
+                        write(crosscheck_report_path, PackageScanner.render_crosscheck_report(verdicts, coverage, orphan_code_files))
                         @info "✓ Stage D crosscheck complete, cost \\\$\$(extraction.cost_usd), overall coverage \$(coverage["overall"])%"
                     catch e
                         @warn "Stage D crosscheck failed" exception=e

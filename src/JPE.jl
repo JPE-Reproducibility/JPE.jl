@@ -37,6 +37,7 @@ using Unicode
 using HTTP
 using JSON
 using MD5
+using PackageScanner
 using Random
 using CategoricalArrays
 
@@ -55,9 +56,7 @@ include("zip.jl")
 include("reporting.jl")
 include("db_backups.jl")
 include("dataverse.jl")
-include("claims_runner_helpers.jl")
 include("claims_extraction.jl")
-include("crosscheck_runner_helpers.jl")
 include("crosscheck.jl")
 include("report_capping_helpers.jl")
 include("refine.jl")
